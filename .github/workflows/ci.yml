@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: 24
+
+jobs:
+  frontend:
+    name: 前端检查（Biome / tsc / 单元测试 / 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+      - name: Biome（lint + 格式）
+        run: npm run lint
+      - name: TypeScript 类型检查
+        run: npm run typecheck
+      - name: 单元测试
+        run: npm test
+      - name: 构建前端
+        run: npm run build
+
+  rust:
+    name: Rust 检查（fmt / clippy / test）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # tauri::generate_context! 在编译期需要读取前端产物
+      - name: 构建前端
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: check
+
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+
+  build:
+    name: 打包 Windows 安装程序
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          shared-key: release
+
+      # rolling 版本号：0.1.<运行序号>，保证每次构建的安装包版本递增，覆盖安装即可升级
+      - name: 计算版本号
+        id: version
+        shell: bash
+        run: echo "version=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: tauri build
+        shell: bash
+        run: npx tauri build --ci --bundles nsis --config "{\"version\":\"${{ steps.version.outputs.version }}\"}"
+
+      - name: 整理安装包
+        shell: bash
+        run: |
+          mkdir -p release
+          installer=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe)
+          cp "$installer" release/
+          # 固定文件名，供 README 中的"永久最新版"下载链接使用
+          cp "$installer" release/CountdownTimer-setup.exe
+          ls -l release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CountdownTimer-windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: 发布 rolling release
+    needs: [frontend, rust, build]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: rolling-release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: CountdownTimer-windows-x64
+          path: release
+
+      - name: 生成发布说明
+        run: |
+          cat > notes.md <<EOF
+          滚动发布：\`main\` 分支每次通过全部检查后自动更新，始终是最新构建。
+
+          - 版本：\`${VERSION}\`
+          - 提交：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
+          - 构建：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          **安装**：下载 \`CountdownTimer-setup.exe\` 并运行（按当前用户安装，无需管理员权限）。
+          安装包未签名，若出现 SmartScreen 提示，请点击"更多信息 → 仍要运行"。
+          EOF
+
+      - name: 替换 rolling release
+        run: |
+          gh release delete rolling --cleanup-tag --yes || true
+          gh release create rolling release/*.exe \
+            --target "$GITHUB_SHA" \
+            --title "Rolling build ${VERSION}" \
+            --notes-file notes.md \
+            --latest

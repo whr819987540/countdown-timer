@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#818CF8"/>
+      <stop offset="1" stop-color="#4338CA"/>
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="224" fill="url(#bg)"/>
+  <!-- 表冠 -->
+  <rect x="432" y="150" width="160" height="72" rx="36" fill="#FFFFFF"/>
+  <!-- 剩余进度环：周长 2π×272≈1709，显示 70% -->
+  <circle cx="512" cy="560" r="272" fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="80"/>
+  <circle cx="512" cy="560" r="272" fill="none" stroke="#FFFFFF" stroke-width="80" stroke-linecap="round"
+          stroke-dasharray="1196 1709" transform="rotate(-90 512 560)"/>
+  <!-- 指针 -->
+  <line x1="512" y1="560" x2="512" y2="410" stroke="#FFFFFF" stroke-width="64" stroke-linecap="round"/>
+  <circle cx="512" cy="560" r="52" fill="#FFFFFF"/>
+</svg>
