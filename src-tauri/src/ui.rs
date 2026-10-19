@@ -1,7 +1,9 @@
 //! 窗口管理：主窗口与"时间到"提醒弹窗。
 
-use tauri::window::{Color, UserAttentionType};
-use tauri::{AppHandle, Manager, Theme, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::window::Color;
+use tauri::{
+    AppHandle, Manager, Theme, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+};
 
 pub const MAIN: &str = "main";
 pub const ALERT: &str = "alert";

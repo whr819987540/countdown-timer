@@ -61,12 +61,17 @@ cargo test
 npx tauri icon assets/app-icon.svg -o src-tauri/icons   # 修改图标后重新生成，并删除 android/ios/Square* 等无用文件
 ```
 
-在 Linux 上无法编译 Linux 版 Tauri（缺 webkit2gtk）时，可以对 Windows 目标做交叉检查（需要 `llvm-rc`）：
+在 Linux 上无法编译 Linux 版 Tauri（缺 webkit2gtk）时，可以对 Windows 目标做交叉检查（只检查、不链接）：
 
 ```bash
 rustup target add x86_64-pc-windows-msvc
-cd src-tauri && cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+cd src-tauri
+CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 ```
+
+- 资源文件需要 `clang`（预处理）和较新的 `llvm-rc`；`llvm-rc` 10 解析不了 Tauri 生成的 manifest，
+  只做 clippy 时可以在 `PATH` 前面放一个只创建空输出文件（`/fo` 参数）的 `llvm-rc` 替身。
+- `cargo test` 需要链接，只能在 Windows（CI）上运行。
 
 ## 架构要点
 
