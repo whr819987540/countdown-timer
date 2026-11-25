@@ -1,10 +1,9 @@
 import "./styles/main.css";
 import { getVersion } from "@tauri-apps/api/app";
-import { api, type Phase, type Settings, type Snapshot } from "./lib/api.ts";
+import { api, type Mode, type Settings, type Snapshot } from "./lib/api.ts";
 import {
   FIELD_MAX,
   formatClock,
-  formatEndTime,
   fromHms,
   type Hms,
   pad2,
@@ -13,6 +12,7 @@ import {
   stepField,
   toHms,
 } from "./lib/time.ts";
+import { metaText, primaryAction, statusText } from "./lib/view.ts";
 
 function byId<T extends Element = HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -27,6 +27,7 @@ const ui = {
   display: byId("time-display"),
   meta: byId("meta"),
   ring: byId<SVGCircleElement>("ring-progress"),
+  modeSwitch: byId("mode-switch"),
   presets: byId("presets"),
   error: byId("duration-error"),
   primary: byId<HTMLButtonElement>("primary"),
@@ -51,25 +52,20 @@ const fields: Record<keyof Hms, HTMLInputElement> = {
   s: byId("field-s"),
 };
 
-const STATUS_TEXT: Record<Phase, string> = {
-  idle: "设置时长",
-  running: "倒计时中",
-  paused: "已暂停",
-  finished: "时间到",
-};
-
-const PRIMARY_ACTION: Record<Phase, { label: string; icon: string }> = {
-  idle: { label: "开始", icon: "#i-play" },
-  running: { label: "暂停", icon: "#i-pause" },
-  paused: { label: "继续", icon: "#i-play" },
-  finished: { label: "重置", icon: "#i-restart" },
-};
+const modeRadios = [...ui.modeSwitch.querySelectorAll<HTMLInputElement>('input[name="mode"]')];
 
 const HOUR_MS = 3_600_000;
 /** 运行时界面刷新间隔，与 CSS 中 --duration-tick 一致，进度环过渡因此连贯 */
 const RENDER_INTERVAL_MS = 250;
 
-let snapshot: Snapshot = { phase: "idle", durationMs: 0, remainingMs: 0, rounds: 0 };
+let snapshot: Snapshot = {
+  mode: "normal",
+  stage: "work",
+  phase: "idle",
+  durationMs: 0,
+  remainingMs: 0,
+  rounds: 0,
+};
 let receivedAt = performance.now();
 let renderTimer: number | undefined;
 let busy = false;
@@ -80,7 +76,7 @@ function applySnapshot(next: Snapshot): void {
   const previous = snapshot.phase;
   snapshot = next;
   receivedAt = performance.now();
-  if (next.phase === "idle" && previous !== "idle") {
+  if (next.phase === "idle" && previous !== "idle" && next.mode === "normal") {
     // 停止后把编辑器恢复为刚才使用的时长，方便直接再次开始
     writeEditor(next.durationMs);
   }
@@ -98,46 +94,51 @@ function currentRemaining(): number {
     : snapshot.remainingMs;
 }
 
+/** 只在内容变化时写入，避免 aria-live 区域每秒重复播报 */
+function setText(element: HTMLElement, text: string): void {
+  if (element.textContent !== text) element.textContent = text;
+}
+
+/** 空闲的普通模式下显示时长编辑器，其余情况显示剩余时间 */
+function isEditing(): boolean {
+  return snapshot.phase === "idle" && snapshot.mode === "normal";
+}
+
 function renderPhase(): void {
-  const { phase } = snapshot;
+  const { mode, stage, phase } = snapshot;
   const idle = phase === "idle";
+  const editing = isEditing();
+  ui.app.dataset.mode = mode;
+  ui.app.dataset.stage = stage;
   ui.app.dataset.phase = phase;
-  ui.status.textContent = STATUS_TEXT[phase];
-  ui.editor.hidden = !idle;
-  ui.display.hidden = idle;
-  ui.presets.inert = !idle;
+  setText(ui.status, statusText(snapshot));
+  ui.editor.hidden = !editing;
+  ui.display.hidden = editing;
+  ui.presets.inert = !editing;
   ui.secondary.hidden = idle;
-  ui.primaryLabel.textContent = PRIMARY_ACTION[phase].label;
-  ui.primaryIcon.setAttribute("href", PRIMARY_ACTION[phase].icon);
+  for (const radio of modeRadios) {
+    radio.checked = radio.value === mode;
+    radio.disabled = !idle;
+  }
+  const action = primaryAction(snapshot);
+  setText(ui.primaryLabel, action.label);
+  ui.primaryIcon.setAttribute("href", action.icon);
 }
 
 function renderClock(): void {
-  const { phase, durationMs, rounds } = snapshot;
-  if (phase === "idle") {
+  const { durationMs } = snapshot;
+  if (isEditing()) {
     ui.ring.style.strokeDashoffset = "0";
-    ui.meta.textContent = "";
+    setText(ui.meta, "");
     return;
   }
   const remaining = currentRemaining();
   const withHours = durationMs >= HOUR_MS;
-  ui.display.textContent = formatClock(remaining, withHours);
+  setText(ui.display, formatClock(remaining, withHours));
   ui.display.classList.toggle("is-long", withHours);
   const fraction = durationMs > 0 ? remaining / durationMs : 0;
   ui.ring.style.strokeDashoffset = String(100 * (1 - fraction));
-  ui.meta.textContent = metaText(phase, remaining, rounds);
-}
-
-function metaText(phase: Phase, remaining: number, rounds: number): string {
-  switch (phase) {
-    case "running":
-      return `第 ${rounds + 1} 轮 · ${formatEndTime(new Date(), remaining)} 结束`;
-    case "paused":
-      return `第 ${rounds + 1} 轮 · 共 ${formatClock(snapshot.durationMs)}`;
-    case "finished":
-      return `已完成 ${rounds} 轮`;
-    default:
-      return "";
-  }
+  setText(ui.meta, metaText(snapshot, remaining, new Date()));
 }
 
 // ---------- 时长编辑 ----------
@@ -213,15 +214,18 @@ function showError(target: HTMLElement, message: string): void {
   target.textContent = message;
 }
 
-async function run(action: () => Promise<void>): Promise<void> {
-  if (busy) return;
+/** 执行一个操作并显示错误；返回是否成功 */
+async function run(action: () => Promise<void>): Promise<boolean> {
+  if (busy) return false;
   busy = true;
   ui.app.setAttribute("aria-busy", "true");
   try {
     await action();
     showError(ui.error, "");
+    return true;
   } catch (error) {
     showError(ui.error, String(error));
+    return false;
   } finally {
     busy = false;
     ui.app.removeAttribute("aria-busy");
@@ -231,6 +235,10 @@ async function run(action: () => Promise<void>): Promise<void> {
 async function onPrimary(): Promise<void> {
   switch (snapshot.phase) {
     case "idle": {
+      if (snapshot.mode === "eyeCare") {
+        await run(() => api.start());
+        break;
+      }
       const duration = readEditor();
       if (duration < 1000) {
         showError(ui.error, "请先设置大于 0 的时长");
@@ -247,13 +255,21 @@ async function onPrimary(): Promise<void> {
       await run(api.resume);
       break;
     case "finished":
-      await run(api.restart);
+      await run(api.advance);
       break;
   }
 }
 
 ui.primary.addEventListener("click", () => void onPrimary());
 ui.secondary.addEventListener("click", () => void run(api.stop));
+
+for (const radio of modeRadios) {
+  radio.addEventListener("change", async () => {
+    if (!radio.checked) return;
+    // 失败时把选中项恢复为实际模式；成功时由随后的 timer-state 事件更新界面
+    if (!(await run(() => api.setMode(radio.value as Mode)))) renderPhase();
+  });
+}
 
 // ---------- 设置 ----------
 
@@ -307,7 +323,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && ui.settings.dataset.open === "true") {
     setSettingsOpen(false);
   } else if (event.key === " " && event.target === document.body) {
-    // 焦点不在任何控件上时，空格键执行主操作（开始 / 暂停 / 继续 / 重置）
+    // 焦点不在任何控件上时，空格键执行主操作（开始 / 暂停 / 继续 / 重置 / 开始休息 / 下一轮）
     event.preventDefault();
     void onPrimary();
   }
@@ -319,7 +335,8 @@ async function init(): Promise<void> {
   await api.onState(applySnapshot);
   const [state, settings] = await Promise.all([api.getState(), api.getSettings()]);
   applySettings(settings);
-  writeEditor(state.phase === "idle" ? settings.durationMs : state.durationMs);
+  // 普通模式开始计时时会记住时长，所以设置里的时长总是编辑器该显示的值
+  writeEditor(settings.durationMs);
   applySnapshot(state);
   getVersion().then(
     (version) => {

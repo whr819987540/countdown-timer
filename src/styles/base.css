@@ -52,6 +52,9 @@
   --color-alert-text: #b91c1c;
   --color-on-alert: #ffffff;
   --color-alert-soft: #fef2f2;
+  /* 20-20-20 模式的远眺休息 */
+  --color-rest: #047857;
+  --color-rest-soft: #ecfdf5;
   --color-ring-track: #e2e8f0;
   --color-focus: #4f46e5;
   --shadow-md: 0 4px 6px rgb(15 23 42 / 8%);
@@ -74,6 +77,8 @@
     --color-alert-text: #f87171;
     --color-on-alert: #0f172a;
     --color-alert-soft: rgb(248 113 113 / 14%);
+    --color-rest: #34d399;
+    --color-rest-soft: rgb(52 211 153 / 14%);
     --color-ring-track: #1e293b;
     --color-focus: #a5b4fc;
     --shadow-md: 0 4px 6px rgb(0 0 0 / 30%);

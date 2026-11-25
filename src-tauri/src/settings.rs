@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::timer;
+use crate::timer::{self, Mode};
 
 const DEFAULT_DURATION_MS: u64 = 25 * 60 * 1000;
 
@@ -16,6 +16,8 @@ const DEFAULT_DURATION_MS: u64 = 25 * 60 * 1000;
 pub struct Settings {
     /// 上一次开始倒计时使用的时长（毫秒），下次启动时恢复
     pub duration_ms: u64,
+    /// 上一次选择的计时模式，下次启动时恢复
+    pub mode: Mode,
     /// 倒计时结束时播放系统闹钟提示音
     pub sound: bool,
     /// 关闭主窗口时隐藏到托盘，而不是退出程序
@@ -26,6 +28,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             duration_ms: DEFAULT_DURATION_MS,
+            mode: Mode::Normal,
             sound: true,
             close_to_tray: true,
         }
@@ -82,6 +85,7 @@ mod tests {
         let path = temp_path("roundtrip.json");
         let settings = Settings {
             duration_ms: 90_000,
+            mode: Mode::EyeCare,
             sound: false,
             close_to_tray: false,
         };
@@ -97,6 +101,7 @@ mod tests {
         fs::write(&path, r#"{ "durationMs": 0, "sound": false }"#).unwrap();
         let settings = Settings::load(&path);
         assert_eq!(settings.duration_ms, DEFAULT_DURATION_MS);
+        assert_eq!(settings.mode, Mode::Normal);
         assert!(!settings.sound);
         assert!(settings.close_to_tray);
 

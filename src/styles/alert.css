@@ -27,6 +27,16 @@ body {
 .alert-icon .icon {
   width: 32px;
   height: 32px;
+}
+
+/* 远眺休息中：眼睛图标、休息色 */
+.alert[data-kind="rest"] .alert-icon {
+  background: var(--color-rest-soft);
+  color: var(--color-rest);
+}
+
+/* 时间到：铃铛摆动三次；每次重新进入该状态都会重播 */
+.alert[data-kind="alarm"] .alert-icon .icon {
   transform-origin: 50% 10%;
   animation: ring 1.2s var(--ease-out) 3;
 }
@@ -54,15 +64,32 @@ body {
   font-weight: 700;
 }
 
+.alert-timer {
+  margin-top: var(--space-xs);
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-rest);
+}
+
+.alert[data-phase="paused"] .alert-timer {
+  color: var(--color-fg-muted);
+}
+
 .alert-desc {
   margin-top: var(--space-xs);
   color: var(--color-fg-muted);
+  text-wrap: balance;
   font-variant-numeric: tabular-nums;
 }
 
+/* 休息中只有"停止"一个按钮时占满整行 */
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
   gap: var(--space-sm);
   width: 100%;
   margin-top: auto;

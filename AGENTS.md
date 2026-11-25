@@ -5,6 +5,7 @@
 ## 项目概览
 
 轻量的 Windows 倒计时桌面应用：设置时长 → 开始 → 时间到弹出置顶提醒 → 用户点击「重置」以相同时长再来一轮。
+另有 20-20-20 护眼模式（专注 20 分钟 → 确认后远眺休息 20 秒 → 手动开始下一轮）。
 支持系统托盘后台驻留、开机自启动。功能细节以 [docs/FEATURES.md](docs/FEATURES.md) 为准。
 
 - 桌面框架：Tauri v2（Rust，系统 WebView2）
@@ -17,12 +18,13 @@
 
 ```text
 index.html                主窗口（含内联 SVG 图标 sprite）
-alert.html                「时间到」提醒弹窗（无边框、置顶，由后端按需创建 / 销毁）
+alert.html                提醒弹窗：时间到 / 护眼模式的休息提醒（无边框、置顶，由后端按需创建 / 销毁）
 src/
   main.ts                 主窗口逻辑：渲染状态、时长编辑、设置面板
   alert.ts                提醒弹窗逻辑
   lib/api.ts              所有 Tauri 命令与事件的类型化封装（前端只通过它和后端通信）
   lib/time.ts             纯函数工具（格式化、解析、步进），配套 time.test.ts
+  lib/view.ts             由快照推导界面文案（状态、按钮、弹窗内容），配套 view.test.ts
   styles/base.css         设计令牌（颜色 / 间距 / 字体 / 动效）与通用组件
   styles/main.css         主窗口样式
   styles/alert.css        提醒弹窗样式
@@ -77,6 +79,9 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 
 - **计时只在 Rust 里做**。`timer::Timer` 是纯状态机（Idle / Running / Paused / Finished），所有方法显式接收
   `now: Instant`，便于测试。前端只负责展示：收到快照后用 `performance.now()` 在两次推送之间插值。
+- **模式与段**：`Mode`（Normal / EyeCare）只能在空闲时切换并记入设置；一次计时由若干段组成，
+  `Stage`（Work / Rest）标识当前段。每段结束都停在 Finished，由 `advance` 进入下一段：普通模式以相同时长再来一轮，
+  护眼模式在 20 分钟专注与 20 秒休息之间交替。快照的 `durationMs` 是**当前段**的时长。
 - **线程模型**（见 `service.rs` 顶部注释）：
   - 命令和托盘菜单修改状态机后调用 `service::refresh`；
   - 后台线程 `countdown-ticker` 用 `Condvar` 等待到下一个整秒边界，检测本轮是否结束；
@@ -86,6 +91,8 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 - **前后端契约**：命令名、参数和 `Snapshot` / `Settings` 结构在 `src/lib/api.ts` 与 Rust 两侧必须同步修改。
   Rust 结构体统一 `#[serde(rename_all = "camelCase")]`。命令不返回快照，状态一律通过 `timer-state` 事件下发。
 - **提醒弹窗按需创建**，用户操作后 `destroy()`，不常驻内存；用 `Alt+F4` 关闭等同于「停止」。
+  显示条件由 `publish` 根据快照判断：Finished 时打开并置前，护眼模式的休息段（Running / Paused）期间保持打开
+  显示倒计时，其余状态销毁。
 - **主窗口启动时隐藏**（`visible: false`），在 `setup` 中设置与主题一致的背景色后再显示，避免闪白；
   带 `--hidden` 参数（开机自启动）时不显示。
 - 设置保存在 `app_config_dir()/settings.json`；开机自启动状态以 `tauri-plugin-autostart`（注册表）为准，不存文件。

@@ -1,4 +1,4 @@
-//! 窗口管理：主窗口与"时间到"提醒弹窗。
+//! 窗口管理：主窗口与提醒弹窗（"时间到"，以及护眼模式的休息提醒）。
 
 use tauri::window::Color;
 use tauri::{
@@ -16,18 +16,20 @@ pub fn show_main(app: &AppHandle) {
     }
 }
 
-/// 弹出置顶的提醒窗口；已存在时只把它重新带到前台。
-pub fn show_alert(app: &AppHandle) {
+/// 弹出置顶的提醒窗口。窗口已存在时，`attention` 为真才把它重新带到前台并闪烁任务栏。
+pub fn show_alert(app: &AppHandle, title: &str, attention: bool) {
     if let Some(window) = app.get_webview_window(ALERT) {
-        bring_to_front(&window);
+        if attention {
+            bring_to_front(&window, true);
+        }
         return;
     }
     let theme = app
         .get_webview_window(MAIN)
         .and_then(|window| window.theme().ok());
     let built = WebviewWindowBuilder::new(app, ALERT, WebviewUrl::App("alert.html".into()))
-        .title("时间到")
-        .inner_size(360.0, 300.0)
+        .title(title)
+        .inner_size(360.0, 320.0)
         .resizable(false)
         .maximizable(false)
         .minimizable(false)
@@ -37,7 +39,7 @@ pub fn show_alert(app: &AppHandle) {
         .background_color(background_for(theme))
         .build();
     match built {
-        Ok(window) => bring_to_front(&window),
+        Ok(window) => bring_to_front(&window, attention),
         Err(err) => eprintln!("无法打开提醒窗口：{err}"),
     }
 }
@@ -49,11 +51,13 @@ pub fn close_alert(app: &AppHandle) {
     }
 }
 
-fn bring_to_front(window: &WebviewWindow) {
+fn bring_to_front(window: &WebviewWindow, attention: bool) {
     let _ = window.show();
     let _ = window.set_focus();
-    // Windows 可能拒绝后台程序抢占焦点，此时任务栏图标会闪烁提示
-    let _ = window.request_user_attention(Some(UserAttentionType::Critical));
+    if attention {
+        // Windows 可能拒绝后台程序抢占焦点，此时任务栏图标会闪烁提示
+        let _ = window.request_user_attention(Some(UserAttentionType::Critical));
+    }
 }
 
 /// 与前端 CSS 中的 `--color-bg` 一致，避免 WebView 加载完成前闪白。

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::settings::Settings;
-use crate::timer::{Phase, Snapshot, Timer, TimerError};
+use crate::timer::{Mode, Phase, Snapshot, Stage, Timer, TimerError};
 use crate::{sound, tray, ui};
 
 /// 前端监听的状态事件名
@@ -26,19 +26,19 @@ pub struct AppState {
     wake: Condvar,
     settings: Mutex<Settings>,
     settings_path: PathBuf,
-    /// 最近一次同步到界面的阶段，用来识别阶段切换
-    published_phase: Mutex<Phase>,
+    /// 最近一次同步到界面的快照，用来识别阶段切换
+    published: Mutex<Option<Snapshot>>,
 }
 
 impl AppState {
     pub fn new(settings_path: PathBuf) -> Self {
         let settings = Settings::load(&settings_path);
         Self {
-            timer: Mutex::new(Timer::new(settings.duration())),
+            timer: Mutex::new(Timer::new(settings.duration(), settings.mode)),
             wake: Condvar::new(),
             settings: Mutex::new(settings),
             settings_path,
-            published_phase: Mutex::new(Phase::Idle),
+            published: Mutex::new(None),
         }
     }
 
@@ -76,12 +76,22 @@ fn apply(
     Ok(())
 }
 
-/// 以给定时长开始新的倒计时，并记住该时长供下次使用。
-pub fn start(app: &AppHandle, duration: Duration) -> Result<(), TimerError> {
+/// 开始新的倒计时。给出时长时记住它供下次使用；省略时沿用上次的时长（护眼模式时长固定）。
+pub fn start(app: &AppHandle, duration: Option<Duration>) -> Result<(), TimerError> {
     apply(app, |timer, now| timer.start(duration, now))?;
-    let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    if let Some(duration) = duration {
+        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        app.state::<AppState>()
+            .update_settings(|settings| settings.duration_ms = duration_ms);
+    }
+    Ok(())
+}
+
+/// 切换计时模式（仅空闲时可用），并记住该模式供下次启动使用。
+pub fn set_mode(app: &AppHandle, mode: Mode) -> Result<(), TimerError> {
+    apply(app, |timer, _| timer.set_mode(mode))?;
     app.state::<AppState>()
-        .update_settings(|settings| settings.duration_ms = duration_ms);
+        .update_settings(|settings| settings.mode = mode);
     Ok(())
 }
 
@@ -93,12 +103,9 @@ pub fn resume(app: &AppHandle) -> Result<(), TimerError> {
     apply(app, Timer::resume)
 }
 
-/// "重置"：以相同时长再来一轮。
-pub fn restart(app: &AppHandle) -> Result<(), TimerError> {
-    apply(app, |timer, now| {
-        timer.restart(now);
-        Ok(())
-    })
+/// 本段结束后进入下一段："重置"再来一轮，或护眼模式的开始休息 / 开始下一轮。
+pub fn advance(app: &AppHandle) -> Result<(), TimerError> {
+    apply(app, Timer::advance)
 }
 
 pub fn stop(app: &AppHandle) -> Result<(), TimerError> {
@@ -108,15 +115,14 @@ pub fn stop(app: &AppHandle) -> Result<(), TimerError> {
     })
 }
 
-/// 托盘菜单的主操作：按当前阶段执行 开始 / 暂停 / 继续 / 重置。
+/// 托盘菜单的主操作：按当前阶段执行 开始 / 暂停 / 继续 / 进入下一段。
 pub fn toggle(app: &AppHandle) -> Result<(), TimerError> {
-    let state = app.state::<AppState>();
-    let phase = lock(&state.timer).phase();
+    let phase = lock(&app.state::<AppState>().timer).phase();
     match phase {
-        Phase::Idle => start(app, state.settings().duration()),
+        Phase::Idle => start(app, None),
         Phase::Running => pause(app),
         Phase::Paused => resume(app),
-        Phase::Finished => restart(app),
+        Phase::Finished => advance(app),
     }
 }
 
@@ -131,24 +137,34 @@ pub fn refresh(app: &AppHandle) {
 fn publish(app: &AppHandle) {
     let state = app.state::<AppState>();
     let snapshot = state.snapshot();
-    let previous = std::mem::replace(&mut *lock(&state.published_phase), snapshot.phase);
-    let phase_changed = previous != snapshot.phase;
+    let previous = lock(&state.published).replace(snapshot);
+    let view = |s: &Snapshot| (s.mode, s.stage, s.phase);
+    let changed = previous.as_ref().map(view) != Some(view(&snapshot));
 
     if let Err(err) = app.emit(STATE_EVENT, snapshot) {
         eprintln!("推送状态失败：{err}");
     }
-    tray::update(app, &snapshot, phase_changed);
+    tray::update(app, &snapshot, changed);
 
-    if !phase_changed {
+    if !changed {
         return;
     }
+    if previous.is_some_and(|previous| previous.phase == Phase::Finished) {
+        sound::stop_alarm();
+    }
+    let title = match snapshot.mode {
+        Mode::Normal => "时间到",
+        Mode::EyeCare => "20-20-20 护眼",
+    };
     if snapshot.phase == Phase::Finished {
         if state.settings().sound {
             sound::start_alarm();
         }
-        ui::show_alert(app);
-    } else if previous == Phase::Finished {
-        sound::stop_alarm();
+        ui::show_alert(app, title, true);
+    } else if snapshot.stage == Stage::Rest {
+        // 远眺休息期间弹窗保持打开并显示倒计时；从"该休息了"切换过来时不再抢焦点
+        ui::show_alert(app, title, false);
+    } else {
         ui::close_alert(app);
     }
 }

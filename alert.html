@@ -16,6 +16,18 @@
           d="M224,71.1a8,8,0,0,1-10.78-3.42,94.13,94.13,0,0,0-33.46-36.91,8,8,0,1,1,8.54-13.54,111.46,111.46,0,0,1,39.12,43.09A8,8,0,0,1,224,71.1ZM35.71,72a8,8,0,0,0,7.1-4.32A94.13,94.13,0,0,1,76.27,30.77a8,8,0,1,0-8.54-13.54A111.46,111.46,0,0,0,28.61,60.32,8,8,0,0,0,35.71,72Zm186.1,103.94A16,16,0,0,1,208,200H167.2a40,40,0,0,1-78.4,0H48a16,16,0,0,1-13.79-24.06C43.22,160.39,48,138.28,48,112a80,80,0,0,1,160,0C208,138.27,212.78,160.38,221.81,175.94ZM150.62,200H105.38a24,24,0,0,0,45.24,0Z"
         />
       </symbol>
+      <symbol id="i-eye" viewBox="0 0 256 256">
+        <path
+          fill="currentColor"
+          d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,168a40,40,0,1,1,40-40A40,40,0,0,1,128,168Z"
+        />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 256 256">
+        <path
+          fill="currentColor"
+          d="M240,128a15.74,15.74,0,0,1-7.6,13.51L88.32,229.65a16,16,0,0,1-16.2.3A15.86,15.86,0,0,1,64,216.13V39.87a15.86,15.86,0,0,1,8.12-13.82,16,16,0,0,1,16.2.3L232.4,114.49A15.74,15.74,0,0,1,240,128Z"
+        />
+      </symbol>
       <symbol id="i-restart" viewBox="0 0 256 256">
         <path
           fill="currentColor"
@@ -32,28 +44,31 @@
 
     <main
       class="alert"
+      id="alert"
+      data-kind="alarm"
       role="alertdialog"
       aria-labelledby="alert-title"
       aria-describedby="alert-desc"
       data-tauri-drag-region
     >
       <div class="alert-icon" aria-hidden="true" data-tauri-drag-region>
-        <svg class="icon" aria-hidden="true"><use href="#i-bell" /></svg>
+        <svg class="icon" aria-hidden="true"><use id="alert-icon" href="#i-bell" /></svg>
       </div>
-      <h1 class="alert-title" id="alert-title" data-tauri-drag-region>时间到！</h1>
-      <p class="alert-desc" id="alert-desc" data-tauri-drag-region>倒计时已结束</p>
+      <h1 class="alert-title" id="alert-title" aria-live="polite" data-tauri-drag-region>时间到！</h1>
+      <p class="alert-timer" id="alert-timer" role="timer" hidden data-tauri-drag-region>00:20</p>
+      <p class="alert-desc" id="alert-desc" data-tauri-drag-region></p>
 
       <div class="actions">
-        <button type="button" class="btn btn-primary" id="restart">
-          <svg class="icon" aria-hidden="true"><use href="#i-restart" /></svg>
-          <span>重置</span>
+        <button type="button" class="btn btn-primary" id="primary">
+          <svg class="icon" aria-hidden="true"><use id="primary-icon" href="#i-restart" /></svg>
+          <span id="primary-label">重置</span>
         </button>
         <button type="button" class="btn btn-secondary" id="stop">
           <svg class="icon" aria-hidden="true"><use href="#i-stop" /></svg>
           <span>停止</span>
         </button>
       </div>
-      <p class="alert-hint" id="alert-hint" data-tauri-drag-region>重置后将以相同时长重新开始倒计时 · Esc 停止</p>
+      <p class="alert-hint" id="alert-hint" data-tauri-drag-region></p>
     </main>
   </body>
 </html>

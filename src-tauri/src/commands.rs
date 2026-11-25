@@ -8,7 +8,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::service::{self, AppState};
 use crate::sound;
-use crate::timer::{Snapshot, TimerError};
+use crate::timer::{Mode, Snapshot, TimerError};
 
 type CommandResult<T = ()> = Result<T, String>;
 
@@ -21,9 +21,15 @@ pub fn get_state(state: State<'_, AppState>) -> Snapshot {
     state.snapshot()
 }
 
+/// 省略 `duration_ms` 时沿用上次的时长（护眼模式时长固定，前端不传）。
 #[tauri::command]
-pub fn start(app: AppHandle, duration_ms: u64) -> CommandResult {
-    service::start(&app, Duration::from_millis(duration_ms)).map_err(message)
+pub fn start(app: AppHandle, duration_ms: Option<u64>) -> CommandResult {
+    service::start(&app, duration_ms.map(Duration::from_millis)).map_err(message)
+}
+
+#[tauri::command]
+pub fn set_mode(app: AppHandle, mode: Mode) -> CommandResult {
+    service::set_mode(&app, mode).map_err(message)
 }
 
 #[tauri::command]
@@ -37,8 +43,8 @@ pub fn resume(app: AppHandle) -> CommandResult {
 }
 
 #[tauri::command]
-pub fn restart(app: AppHandle) -> CommandResult {
-    service::restart(&app).map_err(message)
+pub fn advance(app: AppHandle) -> CommandResult {
+    service::advance(&app).map_err(message)
 }
 
 #[tauri::command]

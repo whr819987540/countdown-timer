@@ -4,7 +4,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
 
-use crate::timer::{format_clock, Phase, Snapshot, TimerError};
+use crate::timer::{format_clock, Mode, Phase, Snapshot, Stage, TimerError};
 use crate::{service, ui};
 
 struct TrayHandles {
@@ -15,7 +15,7 @@ struct TrayHandles {
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-    let toggle = MenuItem::with_id(app, "toggle", toggle_label(Phase::Idle), true, None::<&str>)?;
+    let toggle = MenuItem::with_id(app, "toggle", "开始", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "停止", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
@@ -67,26 +67,37 @@ pub fn update(app: &AppHandle, snapshot: &Snapshot, phase_changed: bool) {
     };
     let _ = handles.icon.set_tooltip(Some(tooltip(snapshot)));
     if phase_changed {
-        let _ = handles.toggle.set_text(toggle_label(snapshot.phase));
+        let _ = handles.toggle.set_text(toggle_label(snapshot));
         let _ = handles.stop.set_enabled(snapshot.phase != Phase::Idle);
     }
 }
 
-fn toggle_label(phase: Phase) -> &'static str {
-    match phase {
-        Phase::Idle => "开始",
-        Phase::Running => "暂停",
-        Phase::Paused => "继续",
-        Phase::Finished => "重置",
+fn toggle_label(snapshot: &Snapshot) -> &'static str {
+    match (snapshot.mode, snapshot.stage, snapshot.phase) {
+        (_, _, Phase::Idle) => "开始",
+        (_, _, Phase::Running) => "暂停",
+        (_, _, Phase::Paused) => "继续",
+        (Mode::Normal, _, Phase::Finished) => "重置",
+        (Mode::EyeCare, Stage::Work, Phase::Finished) => "开始休息",
+        (Mode::EyeCare, Stage::Rest, Phase::Finished) => "开始下一轮",
     }
 }
 
 fn tooltip(snapshot: &Snapshot) -> String {
-    match snapshot.phase {
-        Phase::Idle => format!("倒计时 · 就绪 {}", format_clock(snapshot.duration_ms)),
-        Phase::Running => format!("倒计时 · 剩余 {}", format_clock(snapshot.remaining_ms)),
-        Phase::Paused => format!("倒计时 · 已暂停 {}", format_clock(snapshot.remaining_ms)),
-        Phase::Finished => "倒计时 · 时间到！".to_owned(),
+    let remaining = format_clock(snapshot.remaining_ms);
+    match (snapshot.mode, snapshot.stage, snapshot.phase) {
+        (Mode::Normal, _, Phase::Idle) => {
+            format!("倒计时 · 就绪 {}", format_clock(snapshot.duration_ms))
+        }
+        (Mode::Normal, _, Phase::Running) => format!("倒计时 · 剩余 {remaining}"),
+        (Mode::Normal, _, Phase::Paused) => format!("倒计时 · 已暂停 {remaining}"),
+        (Mode::Normal, _, Phase::Finished) => "倒计时 · 时间到！".to_owned(),
+        (Mode::EyeCare, _, Phase::Idle) => "20-20-20 护眼 · 就绪".to_owned(),
+        (Mode::EyeCare, Stage::Work, Phase::Running) => format!("20-20-20 · 专注剩余 {remaining}"),
+        (Mode::EyeCare, Stage::Rest, Phase::Running) => format!("20-20-20 · 远眺休息 {remaining}"),
+        (Mode::EyeCare, _, Phase::Paused) => format!("20-20-20 · 已暂停 {remaining}"),
+        (Mode::EyeCare, Stage::Work, Phase::Finished) => "20-20-20 · 该休息眼睛了！".to_owned(),
+        (Mode::EyeCare, Stage::Rest, Phase::Finished) => "20-20-20 · 休息结束".to_owned(),
     }
 }
 

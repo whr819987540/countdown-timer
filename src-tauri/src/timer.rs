@@ -2,14 +2,42 @@
 //!
 //! 这里只有纯逻辑：所有与时间有关的方法都显式接收 `now`，方便单元测试，
 //! 也让计时完全基于单调时钟（`Instant`），不受窗口隐藏或系统改时间的影响。
+//!
+//! 一次计时由若干"段"组成：普通模式每段都是用户设置的时长；20-20-20 护眼模式在
+//! 20 分钟专注（[`Stage::Work`]）和 20 秒远眺休息（[`Stage::Rest`]）之间交替。
+//! 每段结束后都停在 [`Phase::Finished`]，由用户手动 [`Timer::advance`] 进入下一段。
 
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 允许设置的最长时长：99:59:59。
 pub const MAX_DURATION: Duration = Duration::from_secs(99 * 3600 + 59 * 60 + 59);
+
+/// 20-20-20 模式的专注时长
+pub const EYE_CARE_WORK: Duration = Duration::from_secs(20 * 60);
+/// 20-20-20 模式的远眺休息时长
+pub const EYE_CARE_REST: Duration = Duration::from_secs(20);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Mode {
+    /// 普通倒计时：每轮都使用用户设置的时长
+    #[default]
+    Normal,
+    /// 20-20-20 护眼：专注 20 分钟 → 远眺 20 秒 → 专注 20 分钟 ……
+    EyeCare,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Stage {
+    /// 普通模式的倒计时，或护眼模式的专注段
+    Work,
+    /// 护眼模式的远眺休息段
+    Rest,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,7 +46,7 @@ pub enum Phase {
     Idle,
     Running,
     Paused,
-    /// 本轮已结束，等待用户选择"重置"（再来一轮）或"停止"
+    /// 本段已结束，等待用户选择进入下一段（[`Timer::advance`]）或停止
     Finished,
 }
 
@@ -26,10 +54,13 @@ pub enum Phase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    pub mode: Mode,
+    pub stage: Stage,
     pub phase: Phase,
+    /// 当前段的总时长
     pub duration_ms: u64,
     pub remaining_ms: u64,
-    /// 本次会话中已完成的轮数，停止后清零
+    /// 本次会话中已完成的轮数（护眼模式只统计专注段），停止后清零
     pub rounds: u32,
 }
 
@@ -54,39 +85,63 @@ impl std::error::Error for TimerError {}
 
 #[derive(Debug)]
 pub struct Timer {
+    mode: Mode,
+    stage: Stage,
     phase: Phase,
+    /// 普通模式的时长（护眼模式下保持不变，切回普通模式时继续使用）
     duration: Duration,
     /// 非运行状态下的剩余时长
     remaining: Duration,
-    /// 运行状态下本轮的结束时刻
+    /// 运行状态下本段的结束时刻
     deadline: Option<Instant>,
     rounds: u32,
 }
 
 impl Timer {
-    pub fn new(duration: Duration) -> Self {
+    pub fn new(duration: Duration, mode: Mode) -> Self {
         let duration = validate_duration(duration).unwrap_or(Duration::from_secs(25 * 60));
-        Self {
+        let mut timer = Self {
+            mode,
+            stage: Stage::Work,
             phase: Phase::Idle,
             duration,
             remaining: duration,
             deadline: None,
             rounds: 0,
-        }
+        };
+        timer.remaining = timer.segment();
+        timer
     }
 
     pub fn phase(&self) -> Phase {
         self.phase
     }
 
-    /// 以给定时长开始新的一次计时，轮数清零。仅在空闲或已结束时可用。
-    pub fn start(&mut self, duration: Duration, now: Instant) -> Result<(), TimerError> {
+    /// 切换计时模式。仅在空闲时可用。
+    pub fn set_mode(&mut self, mode: Mode) -> Result<(), TimerError> {
+        if self.phase != Phase::Idle {
+            return Err(self.invalid("set_mode"));
+        }
+        self.mode = mode;
+        self.stage = Stage::Work;
+        self.remaining = self.segment();
+        Ok(())
+    }
+
+    /// 开始新的一次计时，轮数清零。仅在空闲或已结束时可用。
+    ///
+    /// 给出 `duration` 时更新普通模式的时长；省略时沿用上次的时长。
+    /// 护眼模式的时长固定，总是从 20 分钟专注开始。
+    pub fn start(&mut self, duration: Option<Duration>, now: Instant) -> Result<(), TimerError> {
         if !matches!(self.phase, Phase::Idle | Phase::Finished) {
             return Err(self.invalid("start"));
         }
-        self.duration = validate_duration(duration)?;
+        if let Some(duration) = duration {
+            self.duration = validate_duration(duration)?;
+        }
         self.rounds = 0;
-        self.run_for(self.duration, now);
+        self.stage = Stage::Work;
+        self.run_for(self.segment(), now);
         Ok(())
     }
 
@@ -108,27 +163,40 @@ impl Timer {
         Ok(())
     }
 
-    /// "重置"：以当前时长立即重新开始一轮，保留已完成的轮数。
-    pub fn restart(&mut self, now: Instant) {
-        self.run_for(self.duration, now);
+    /// 本段结束后进入下一段，保留已完成的轮数。仅在已结束时可用。
+    ///
+    /// 普通模式即"重置"：以相同时长再来一轮；护眼模式在专注与休息之间切换。
+    pub fn advance(&mut self, now: Instant) -> Result<(), TimerError> {
+        if self.phase != Phase::Finished {
+            return Err(self.invalid("advance"));
+        }
+        self.stage = match (self.mode, self.stage) {
+            (Mode::EyeCare, Stage::Work) => Stage::Rest,
+            _ => Stage::Work,
+        };
+        self.run_for(self.segment(), now);
+        Ok(())
     }
 
     /// 停止并回到空闲状态，轮数清零。
     pub fn stop(&mut self) {
         self.phase = Phase::Idle;
-        self.remaining = self.duration;
+        self.stage = Stage::Work;
+        self.remaining = self.segment();
         self.deadline = None;
         self.rounds = 0;
     }
 
-    /// 推进时间。若本轮在 `now` 时已到期，切换为 [`Phase::Finished`] 并返回 `true`。
+    /// 推进时间。若本段在 `now` 时已到期，切换为 [`Phase::Finished`] 并返回 `true`。
     pub fn tick(&mut self, now: Instant) -> bool {
         match self.deadline {
             Some(deadline) if self.phase == Phase::Running && now >= deadline => {
                 self.phase = Phase::Finished;
                 self.remaining = Duration::ZERO;
                 self.deadline = None;
-                self.rounds = self.rounds.saturating_add(1);
+                if self.stage == Stage::Work {
+                    self.rounds = self.rounds.saturating_add(1);
+                }
                 true
             }
             _ => false,
@@ -144,8 +212,10 @@ impl Timer {
 
     pub fn snapshot(&self, now: Instant) -> Snapshot {
         Snapshot {
+            mode: self.mode,
+            stage: self.stage,
             phase: self.phase,
-            duration_ms: duration_ms(self.duration),
+            duration_ms: duration_ms(self.segment()),
             remaining_ms: duration_ms(self.remaining(now)),
             rounds: self.rounds,
         }
@@ -165,6 +235,15 @@ impl Timer {
             fraction
         };
         Some(step.min(remaining))
+    }
+
+    /// 当前段的总时长
+    fn segment(&self) -> Duration {
+        match (self.mode, self.stage) {
+            (Mode::Normal, _) => self.duration,
+            (Mode::EyeCare, Stage::Work) => EYE_CARE_WORK,
+            (Mode::EyeCare, Stage::Rest) => EYE_CARE_REST,
+        }
     }
 
     fn run_for(&mut self, remaining: Duration, now: Instant) {
@@ -212,8 +291,15 @@ mod tests {
 
     fn running(secs: u64) -> (Timer, Instant) {
         let now = Instant::now();
-        let mut timer = Timer::new(SEC * 60);
-        timer.start(SEC * secs as u32, now).unwrap();
+        let mut timer = Timer::new(SEC * 60, Mode::Normal);
+        timer.start(Some(SEC * secs as u32), now).unwrap();
+        (timer, now)
+    }
+
+    fn eye_care() -> (Timer, Instant) {
+        let now = Instant::now();
+        let mut timer = Timer::new(SEC * 60, Mode::EyeCare);
+        timer.start(None, now).unwrap();
         (timer, now)
     }
 
@@ -249,16 +335,25 @@ mod tests {
     }
 
     #[test]
-    fn restart_repeats_with_same_duration_and_keeps_rounds() {
+    fn advance_repeats_with_same_duration_and_keeps_rounds() {
         let (mut timer, t0) = running(5);
         timer.tick(t0 + SEC * 5);
-        timer.restart(t0 + SEC * 8);
+        timer.advance(t0 + SEC * 8).unwrap();
         let snap = timer.snapshot(t0 + SEC * 8);
         assert_eq!(snap.phase, Phase::Running);
+        assert_eq!(snap.stage, Stage::Work);
         assert_eq!(snap.remaining_ms, 5000);
         assert_eq!(snap.rounds, 1);
         assert!(timer.tick(t0 + SEC * 13));
         assert_eq!(timer.snapshot(t0 + SEC * 13).rounds, 2);
+    }
+
+    #[test]
+    fn start_without_duration_reuses_last_one() {
+        let (mut timer, t0) = running(5);
+        timer.stop();
+        timer.start(None, t0).unwrap();
+        assert_eq!(timer.snapshot(t0).duration_ms, 5000);
     }
 
     #[test]
@@ -275,32 +370,112 @@ mod tests {
     #[test]
     fn rejects_invalid_transitions() {
         let now = Instant::now();
-        let mut timer = Timer::new(SEC * 60);
+        let mut timer = Timer::new(SEC * 60, Mode::Normal);
         assert!(timer.pause(now).is_err());
         assert!(timer.resume(now).is_err());
-        timer.start(SEC * 10, now).unwrap();
-        assert!(timer.start(SEC * 10, now).is_err());
+        assert!(timer.advance(now).is_err());
+        timer.start(Some(SEC * 10), now).unwrap();
+        assert!(timer.start(Some(SEC * 10), now).is_err());
         assert!(timer.resume(now).is_err());
+        assert!(timer.advance(now).is_err());
+        assert!(timer.set_mode(Mode::EyeCare).is_err());
     }
 
     #[test]
     fn rejects_invalid_durations() {
         let now = Instant::now();
-        let mut timer = Timer::new(SEC * 60);
+        let mut timer = Timer::new(SEC * 60, Mode::Normal);
         assert_eq!(
-            timer.start(Duration::ZERO, now),
+            timer.start(Some(Duration::ZERO), now),
             Err(TimerError::InvalidDuration)
         );
         assert_eq!(
-            timer.start(MAX_DURATION + SEC, now),
+            timer.start(Some(MAX_DURATION + SEC), now),
             Err(TimerError::InvalidDuration)
         );
-        assert!(timer.start(MAX_DURATION, now).is_ok());
+        assert!(timer.start(Some(MAX_DURATION), now).is_ok());
         // 非法的初始时长回退为默认值
         assert_eq!(
-            Timer::new(Duration::ZERO).snapshot(now).duration_ms,
+            Timer::new(Duration::ZERO, Mode::Normal)
+                .snapshot(now)
+                .duration_ms,
             25 * 60 * 1000
         );
+    }
+
+    #[test]
+    fn eye_care_alternates_work_and_rest() {
+        let (mut timer, t0) = eye_care();
+        let snap = timer.snapshot(t0);
+        assert_eq!((snap.stage, snap.phase), (Stage::Work, Phase::Running));
+        assert_eq!(snap.duration_ms, 20 * 60 * 1000);
+
+        // 专注结束：停下等待用户确认，计一轮
+        let t1 = t0 + EYE_CARE_WORK;
+        assert!(timer.tick(t1));
+        let snap = timer.snapshot(t1);
+        assert_eq!(
+            (snap.stage, snap.phase, snap.rounds),
+            (Stage::Work, Phase::Finished, 1)
+        );
+
+        // 确认后开始 20 秒休息
+        let t2 = t1 + SEC * 3;
+        timer.advance(t2).unwrap();
+        let snap = timer.snapshot(t2);
+        assert_eq!((snap.stage, snap.phase), (Stage::Rest, Phase::Running));
+        assert_eq!((snap.duration_ms, snap.remaining_ms), (20_000, 20_000));
+
+        // 休息结束：同样停下等待用户手动开始下一轮，休息不计轮数
+        let t3 = t2 + EYE_CARE_REST;
+        assert!(timer.tick(t3));
+        let snap = timer.snapshot(t3);
+        assert_eq!(
+            (snap.stage, snap.phase, snap.rounds),
+            (Stage::Rest, Phase::Finished, 1)
+        );
+
+        timer.advance(t3).unwrap();
+        let snap = timer.snapshot(t3);
+        assert_eq!((snap.stage, snap.phase), (Stage::Work, Phase::Running));
+        assert_eq!(snap.remaining_ms, 20 * 60 * 1000);
+        assert_eq!(snap.rounds, 1);
+    }
+
+    #[test]
+    fn eye_care_rest_can_pause_and_stop() {
+        let (mut timer, t0) = eye_care();
+        timer.tick(t0 + EYE_CARE_WORK);
+        let t1 = t0 + EYE_CARE_WORK;
+        timer.advance(t1).unwrap();
+        timer.pause(t1 + SEC * 5).unwrap();
+        assert_eq!(timer.remaining(t1 + SEC * 60), SEC * 15);
+
+        timer.stop();
+        let snap = timer.snapshot(t1);
+        assert_eq!(
+            (snap.mode, snap.stage, snap.phase),
+            (Mode::EyeCare, Stage::Work, Phase::Idle)
+        );
+        assert_eq!((snap.remaining_ms, snap.rounds), (20 * 60 * 1000, 0));
+    }
+
+    #[test]
+    fn switching_mode_keeps_normal_duration() {
+        let now = Instant::now();
+        let mut timer = Timer::new(SEC * 90, Mode::Normal);
+        timer.set_mode(Mode::EyeCare).unwrap();
+        let snap = timer.snapshot(now);
+        assert_eq!(
+            (snap.mode, snap.duration_ms, snap.remaining_ms),
+            (Mode::EyeCare, 1_200_000, 1_200_000)
+        );
+        // 护眼模式固定从 20 分钟专注开始；切回普通模式后仍是原来的时长
+        timer.start(None, now).unwrap();
+        assert_eq!(timer.snapshot(now).remaining_ms, 1_200_000);
+        timer.stop();
+        timer.set_mode(Mode::Normal).unwrap();
+        assert_eq!(timer.snapshot(now).duration_ms, 90_000);
     }
 
     #[test]
@@ -312,7 +487,7 @@ mod tests {
             Some(Duration::from_millis(700))
         );
         assert_eq!(timer.next_wakeup(t0 + SEC * 10), Some(Duration::ZERO));
-        assert_eq!(Timer::new(SEC).next_wakeup(t0), None);
+        assert_eq!(Timer::new(SEC, Mode::Normal).next_wakeup(t0), None);
     }
 
     #[test]

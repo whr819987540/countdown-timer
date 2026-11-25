@@ -47,9 +47,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
             commands::start,
+            commands::set_mode,
             commands::pause,
             commands::resume,
-            commands::restart,
+            commands::advance,
             commands::stop,
             commands::get_settings,
             commands::update_settings,

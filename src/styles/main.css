@@ -33,6 +33,73 @@
   color: var(--color-primary);
 }
 
+/* 模式切换：分段控件（原生单选框，方向键切换） */
+.mode-switch {
+  display: grid;
+  grid-auto-columns: 1fr;
+  grid-auto-flow: column;
+  gap: 2px;
+  width: fit-content;
+  margin: var(--space-xs) auto 0;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-2);
+}
+
+.mode-option {
+  position: relative;
+  cursor: pointer;
+}
+
+.mode-option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.mode-option span {
+  display: block;
+  padding: 5px var(--space-md);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-fg-muted);
+  text-align: center;
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+
+/* 主色文字叠在 surface-2 上的主色浅底时深色主题对比度不足，因此文字用正文色、用描边体现主色 */
+.mode-option input:checked + span {
+  background: var(--color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+  color: var(--color-fg);
+  font-weight: 600;
+}
+
+.mode-option input:focus-visible + span {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* 计时中不能切换模式：保留当前模式的高亮，淡化另一项 */
+.mode-option:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.mode-option input:disabled:not(:checked) + span {
+  opacity: 0.45;
+}
+
+.mode-option:hover input:enabled:not(:checked) + span {
+  color: var(--color-fg);
+}
+
 /* 表盘 */
 .dial {
   position: relative;
@@ -178,13 +245,38 @@
   margin-top: auto;
 }
 
+/* 常用时长与 20-20-20 说明叠放在同一位置，切换模式时布局不跳动 */
+.mode-panel {
+  display: grid;
+}
+
+.mode-panel > * {
+  grid-area: 1 / 1;
+}
+
+.presets,
+.eye-intro {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    visibility var(--duration-base);
+}
+
 .presets {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: var(--space-sm);
-  transition:
-    opacity var(--duration-base) var(--ease-out),
-    visibility var(--duration-base);
+}
+
+.eye-intro {
+  align-self: center;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+  color: var(--color-fg-muted);
+  text-align: center;
+  text-wrap: balance;
 }
 
 .chip {
@@ -237,7 +329,9 @@
 }
 
 /* 各阶段的视觉差异（颜色之外都配有文字状态） */
-.app:not([data-phase="idle"]) .presets {
+.app:not([data-phase="idle"]) .presets,
+.app[data-mode="eyeCare"] .presets,
+.app:not([data-mode="eyeCare"][data-phase="idle"]) .eye-intro {
   visibility: hidden;
   opacity: 0;
 }
@@ -272,6 +366,15 @@
   50% {
     opacity: 0.45;
   }
+}
+
+/* 20-20-20 模式的远眺休息 */
+.app[data-stage="rest"][data-phase="running"] .status {
+  color: var(--color-rest);
+}
+
+.app[data-stage="rest"][data-phase="running"] .ring-progress {
+  stroke: var(--color-rest);
 }
 
 /* 设置面板：从右侧滑入，退出比进入更快 */
