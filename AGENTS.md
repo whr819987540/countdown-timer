@@ -179,3 +179,8 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 
 使用 Conventional Commits，说明用中文，例如 `feat: 提醒弹窗支持 Esc 停止`、`fix: 暂停后托盘提示未更新`、
 `docs: 更新功能说明`、`ci: 缓存 Rust 依赖`。
+
+## 工作流程
+
+功能或修复完成、本地检查通过后，直接提交并推送到 `main`，然后用 GitHub CLI 盯 CI 直到全部通过（含 rolling release）；
+失败时查看日志、修复后再推送（命令见「CI / 发布」）。
