@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod fit;
 mod service;
 mod settings;
 mod sound;
@@ -44,6 +45,7 @@ fn main() {
                 || updater::take_show_after_update(app.handle());
             if let Some(window) = app.get_webview_window(ui::MAIN) {
                 let _ = window.set_background_color(Some(ui::background_for(window.theme().ok())));
+                ui::fit_to_work_area(&window);
                 if show {
                     window.show()?;
                     window.set_focus()?;

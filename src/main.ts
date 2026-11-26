@@ -1,6 +1,7 @@
 import "./styles/main.css";
 import { getVersion } from "@tauri-apps/api/app";
 import { api, type Mode, type Settings, type Snapshot, type UpdateStatus } from "./lib/api.ts";
+import { fitToWindow } from "./lib/fit.ts";
 import {
   FIELD_MAX,
   formatClock,
@@ -388,6 +389,9 @@ document.addEventListener("keydown", (event) => {
 });
 
 // ---------- 启动 ----------
+
+// 与 tauri.conf.json 中主窗口的尺寸一致
+fitToWindow({ width: 380, height: 600 });
 
 async function init(): Promise<void> {
   await Promise.all([api.onState(applySnapshot), api.onUpdate(applyUpdateStatus)]);

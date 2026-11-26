@@ -60,6 +60,7 @@
       "endpoints": [
         "https://github.com/whr819987540/countdown-timer/releases/download/rolling/latest.json"
       ],
+      "requireSignedVersion": true,
       "windows": {
         "installMode": "passive"
       }

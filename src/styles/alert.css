@@ -10,6 +10,7 @@ body {
   flex-direction: column;
   align-items: center;
   height: 100%;
+  overflow-y: auto;
   padding: var(--space-lg) var(--space-lg) var(--space-md);
   text-align: center;
 }

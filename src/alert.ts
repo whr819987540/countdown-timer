@@ -1,5 +1,6 @@
 import "./styles/alert.css";
 import { api, type Snapshot } from "./lib/api.ts";
+import { fitToWindow } from "./lib/fit.ts";
 import { formatClock, remainingAfter } from "./lib/time.ts";
 import { alertView } from "./lib/view.ts";
 
@@ -19,6 +20,9 @@ const primary = byId<HTMLButtonElement>("primary");
 const primaryIcon = document.getElementById("primary-icon") as unknown as SVGUseElement;
 const primaryLabel = byId("primary-label");
 const stop = byId<HTMLButtonElement>("stop");
+
+// 与后端 ui::show_alert 中的窗口尺寸一致
+fitToWindow({ width: 360, height: 320 });
 
 /** 与主窗口一致的刷新间隔 */
 const RENDER_INTERVAL_MS = 250;
