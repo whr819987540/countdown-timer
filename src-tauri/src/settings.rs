@@ -24,6 +24,10 @@ pub struct Settings {
     pub close_to_tray: bool,
     /// 定期检查新版本（只提示，不自动安装）
     pub auto_update: bool,
+    /// 开始计时后把主窗口缩为置顶的悬浮窗
+    pub mini_on_start: bool,
+    /// 悬浮窗上次所在位置（物理像素），下次打开时沿用
+    pub mini_position: Option<(i32, i32)>,
 }
 
 impl Default for Settings {
@@ -34,6 +38,8 @@ impl Default for Settings {
             sound: true,
             close_to_tray: true,
             auto_update: true,
+            mini_on_start: true,
+            mini_position: None,
         }
     }
 }
@@ -92,6 +98,8 @@ mod tests {
             sound: false,
             close_to_tray: false,
             auto_update: false,
+            mini_on_start: false,
+            mini_position: Some((-1200, 40)),
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
@@ -109,6 +117,8 @@ mod tests {
         assert!(!settings.sound);
         assert!(settings.close_to_tray);
         assert!(settings.auto_update);
+        assert!(settings.mini_on_start);
+        assert_eq!(settings.mini_position, None);
 
         fs::write(&path, "not json").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());

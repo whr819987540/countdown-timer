@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "主窗口与提醒弹窗所需的最小权限",
-  "windows": ["main", "alert"],
+  "windows": ["main", "alert", "mini"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

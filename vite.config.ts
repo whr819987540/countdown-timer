@@ -20,6 +20,7 @@ export default defineConfig({
       input: {
         main: resolve(import.meta.dirname, "index.html"),
         alert: resolve(import.meta.dirname, "alert.html"),
+        mini: resolve(import.meta.dirname, "mini.html"),
       },
     },
   },

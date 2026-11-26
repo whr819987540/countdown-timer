@@ -64,6 +64,8 @@ fn main() {
             commands::stop,
             commands::get_settings,
             commands::update_settings,
+            commands::show_main,
+            commands::show_mini,
             commands::get_update_status,
             commands::check_update,
             commands::install_update,
@@ -85,6 +87,12 @@ fn handle_window_event(window: &Window, event: &WindowEvent) {
                 let _ = window.hide();
             } else {
                 app.exit(0);
+            }
+        }
+        ui::MINI => {
+            // 用 Alt+F4 关闭悬浮窗：计时在托盘中继续，记住位置供下次使用
+            if let Ok(position) = window.outer_position() {
+                ui::remember_mini_position(app, position);
             }
         }
         ui::ALERT => {

@@ -1,0 +1,123 @@
+@import "./base.css";
+
+body {
+  /* 无边框窗口：用细边框和主题背景界定悬浮窗范围 */
+  border: 1px solid var(--color-border-strong);
+}
+
+.mini {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  height: 100%;
+  padding: 0 var(--space-sm) 0 var(--space-md);
+  cursor: grab;
+}
+
+/* 非交互元素不接收指针事件，按下时命中带 data-tauri-drag-region 的容器，整窗都可拖动 */
+.mini-ring,
+.mini-text {
+  pointer-events: none;
+}
+
+.mini-ring {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  transform: rotate(-90deg);
+}
+
+.mini-ring circle {
+  fill: none;
+  stroke-width: 4;
+}
+
+.mini-ring .ring-track {
+  stroke: var(--color-ring-track);
+}
+
+.mini-ring .ring-progress {
+  stroke: var(--color-primary);
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 0;
+  transition:
+    stroke-dashoffset var(--duration-tick) linear,
+    stroke var(--duration-base) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+
+.mini-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.mini-time {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  transition: color var(--duration-base) var(--ease-out);
+}
+
+.mini-time.is-long {
+  font-size: 18px;
+}
+
+.mini-status {
+  overflow: hidden;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-fg-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mini-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+}
+
+/* 各阶段的视觉差异与主窗口一致（颜色之外都配有状态文字） */
+.mini[data-phase="running"] .mini-status {
+  color: var(--color-primary);
+}
+
+.mini[data-phase="paused"] .ring-progress {
+  stroke: var(--color-border-strong);
+}
+
+.mini[data-phase="paused"] .mini-time {
+  color: var(--color-fg-muted);
+}
+
+.mini[data-phase="finished"] .mini-status,
+.mini[data-phase="finished"] .mini-time {
+  color: var(--color-alert-text);
+}
+
+.mini[data-phase="finished"] .ring-progress {
+  opacity: 0;
+}
+
+.mini[data-phase="finished"] .ring-track {
+  stroke: var(--color-alert);
+  animation: pulse 1.6s var(--ease-out) infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* 20-20-20 模式的远眺休息 */
+.mini[data-stage="rest"][data-phase="running"] .mini-status {
+  color: var(--color-rest);
+}
+
+.mini[data-stage="rest"][data-phase="running"] .ring-progress {
+  stroke: var(--color-rest);
+}

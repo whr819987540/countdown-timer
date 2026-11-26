@@ -41,11 +41,13 @@ const ui = {
   updateBannerText: byId("update-banner-text"),
   settings: byId("settings"),
   openSettings: byId<HTMLButtonElement>("open-settings"),
+  toMini: byId<HTMLButtonElement>("to-mini"),
   closeSettings: byId<HTMLButtonElement>("close-settings"),
   optSound: byId<HTMLInputElement>("opt-sound"),
   optTray: byId<HTMLInputElement>("opt-tray"),
   optAutostart: byId<HTMLInputElement>("opt-autostart"),
   optUpdate: byId<HTMLInputElement>("opt-update"),
+  optMini: byId<HTMLInputElement>("opt-mini"),
   updateStatus: byId("update-status"),
   updateAction: byId<HTMLButtonElement>("update-action"),
   settingsError: byId("settings-error"),
@@ -125,6 +127,7 @@ function renderPhase(): void {
   ui.display.hidden = editing;
   ui.presets.inert = !editing;
   ui.secondary.hidden = idle;
+  ui.toMini.hidden = idle;
   for (const radio of modeRadios) {
     radio.checked = radio.value === mode;
     radio.disabled = !idle;
@@ -270,6 +273,7 @@ async function onPrimary(): Promise<void> {
 }
 
 ui.primary.addEventListener("click", () => void onPrimary());
+ui.toMini.addEventListener("click", () => void api.showMini());
 ui.secondary.addEventListener("click", () => void run(api.stop));
 
 for (const radio of modeRadios) {
@@ -332,6 +336,7 @@ function applySettings(settings: Settings): void {
   ui.optTray.checked = settings.closeToTray;
   ui.optAutostart.checked = settings.autostart;
   ui.optUpdate.checked = settings.autoUpdate;
+  ui.optMini.checked = settings.miniOnStart;
   ui.trayHint.textContent = settings.closeToTray
     ? "关闭窗口后仍会在托盘中继续计时"
     : "关闭窗口将退出程序";
@@ -354,7 +359,7 @@ function setSettingsOpen(open: boolean): void {
 
 function bindSwitch(
   input: HTMLInputElement,
-  key: "sound" | "closeToTray" | "autostart" | "autoUpdate",
+  key: "sound" | "closeToTray" | "autostart" | "autoUpdate" | "miniOnStart",
 ): void {
   input.addEventListener("change", async () => {
     showError(ui.settingsError, "");
@@ -371,6 +376,7 @@ bindSwitch(ui.optSound, "sound");
 bindSwitch(ui.optTray, "closeToTray");
 bindSwitch(ui.optAutostart, "autostart");
 bindSwitch(ui.optUpdate, "autoUpdate");
+bindSwitch(ui.optMini, "miniOnStart");
 
 ui.openSettings.addEventListener("click", () => setSettingsOpen(true));
 ui.closeSettings.addEventListener("click", () => setSettingsOpen(false));

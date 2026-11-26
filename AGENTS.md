@@ -19,9 +19,11 @@
 ```text
 index.html                主窗口（含内联 SVG 图标 sprite）
 alert.html                提醒弹窗：时间到 / 护眼模式的休息提醒（无边框、置顶，由后端按需创建 / 销毁）
+mini.html                 计时悬浮窗（无边框、置顶、不占任务栏，由后端按需创建 / 销毁）
 src/
   main.ts                 主窗口逻辑：渲染状态、时长编辑、设置面板
   alert.ts                提醒弹窗逻辑
+  mini.ts                 悬浮窗逻辑
   lib/api.ts              所有 Tauri 命令与事件的类型化封装（前端只通过它和后端通信）
   lib/time.ts             纯函数工具（格式化、解析、步进），配套 time.test.ts
   lib/view.ts             由快照推导界面文案（状态、按钮、弹窗内容），配套 view.test.ts
@@ -30,9 +32,10 @@ src/
   styles/base.css         设计令牌（颜色 / 间距 / 字体 / 动效）与通用组件
   styles/main.css         主窗口样式
   styles/alert.css        提醒弹窗样式
+  styles/mini.css         悬浮窗样式
 src-tauri/
   tauri.conf.json         窗口、CSP、打包（NSIS）配置
-  capabilities/           前端权限（最小化：core:default + 拖动窗口）
+  capabilities/           前端权限（最小化：core:default + 拖动窗口；新窗口要加进 windows 列表）
   icons/                  由 assets/app-icon.svg 生成，不要手改
   src/main.rs             组装插件、托盘、窗口事件、命令
   src/timer.rs            倒计时状态机（纯逻辑 + 单元测试）
@@ -97,6 +100,12 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 - **提醒弹窗按需创建**，用户操作后 `destroy()`，不常驻内存；用 `Alt+F4` 关闭等同于「停止」。
   显示条件由 `publish` 根据快照判断：Finished 时打开并置前，护眼模式的休息段（Running / Paused）期间保持打开
   显示倒计时，其余状态销毁。
+- **悬浮窗**（`ui::show_mini` / `exit_mini`）：`publish` 检测到一次计时开始（空闲 → 非空闲）且开启了
+  `mini_on_start` 时打开悬浮窗并隐藏主窗口，记录主窗口原本是否可见；回到空闲时关闭悬浮窗，按记录恢复主窗口。
+  `ui::show_main`（展开、托盘、单实例唤起）会先关闭悬浮窗。悬浮窗关闭时把位置写入设置，下次打开时若仍在某个
+  显示器工作区内就沿用，否则放到右上角（计算在 `fit.rs`）。
+- **创建 / 销毁窗口的命令必须是 `async`**：同步命令在主线程执行，Windows 上在其中创建窗口会死锁；
+  命令内再用 `run_on_main_thread` 派发窗口操作。
 - **主窗口启动时隐藏**（`visible: false`），在 `setup` 中设置与主题一致的背景色后再显示，避免闪白；
   带 `--hidden` 参数（开机自启动）时不显示。
 - **高缩放比例适配**：窗口尺寸以逻辑像素固定且不可调整，高缩放比例下可能比屏幕工作区还高，而系统按整块屏幕居中，

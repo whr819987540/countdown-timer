@@ -51,6 +51,26 @@ pub fn fit_window(area: Rect, outer: Rect, inner: (u32, u32)) -> Option<Fit> {
     })
 }
 
+/// `rect` 是否完整位于 `area` 内
+pub fn contains(area: Rect, rect: Rect) -> bool {
+    let right = |r: Rect| i64::from(r.x) + i64::from(r.width);
+    let bottom = |r: Rect| i64::from(r.y) + i64::from(r.height);
+    rect.x >= area.x
+        && rect.y >= area.y
+        && right(rect) <= right(area)
+        && bottom(rect) <= bottom(area)
+}
+
+/// 把 `size` 大小的窗口放在 `area` 右上角、留出 `margin` 边距时的左上角坐标
+pub fn top_right(area: Rect, size: (u32, u32), margin: u32) -> (i32, i32) {
+    let x = i64::from(area.x) + i64::from(area.width) - i64::from(size.0) - i64::from(margin);
+    let y = i64::from(area.y) + i64::from(margin);
+    (
+        i32::try_from(x.max(i64::from(area.x))).unwrap_or(area.x),
+        i32::try_from(y).unwrap_or(area.y),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +131,32 @@ mod tests {
         let fit = fit_window(area, outer_at(-1293, 0, INNER), INNER).unwrap();
         assert_eq!(fit.y, 84);
         assert!(fit.x >= -1920 && fit.x + 681 <= 0);
+    }
+
+    #[test]
+    fn checks_containment() {
+        let rect = |x, y| Rect {
+            x,
+            y,
+            width: 420,
+            height: 112,
+        };
+        assert!(contains(AREA, rect(0, 0)));
+        assert!(contains(AREA, rect(1500, 884)));
+        assert!(!contains(AREA, rect(1501, 0)));
+        assert!(!contains(AREA, rect(0, 885)));
+        assert!(!contains(AREA, rect(-1, 10)));
+    }
+
+    #[test]
+    fn places_window_at_top_right() {
+        assert_eq!(top_right(AREA, (420, 112), 28), (1920 - 420 - 28, 28));
+        let offset = Rect {
+            x: -1920,
+            y: 84,
+            width: 1920,
+            height: 996,
+        };
+        assert_eq!(top_right(offset, (420, 112), 28), (-420 - 28, 84 + 28));
     }
 }

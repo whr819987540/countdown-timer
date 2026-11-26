@@ -7,9 +7,9 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::service::{self, AppState};
-use crate::sound;
 use crate::timer::{Mode, Snapshot, TimerError};
 use crate::updater::{self, UpdateStatus};
+use crate::{sound, ui};
 
 type CommandResult<T = ()> = Result<T, String>;
 
@@ -60,6 +60,7 @@ pub struct SettingsView {
     sound: bool,
     close_to_tray: bool,
     auto_update: bool,
+    mini_on_start: bool,
     /// 开机自启动的真实状态以注册表为准，不存进 settings.json
     autostart: bool,
 }
@@ -70,6 +71,7 @@ pub struct SettingsPatch {
     sound: Option<bool>,
     close_to_tray: Option<bool>,
     auto_update: Option<bool>,
+    mini_on_start: Option<bool>,
     autostart: Option<bool>,
 }
 
@@ -104,6 +106,9 @@ pub fn update_settings(app: AppHandle, patch: SettingsPatch) -> CommandResult<Se
         if let Some(auto_update) = patch.auto_update {
             settings.auto_update = auto_update;
         }
+        if let Some(mini_on_start) = patch.mini_on_start {
+            settings.mini_on_start = mini_on_start;
+        }
     });
     if patch.auto_update == Some(true) {
         // 刚打开自动检查时立即检查一次，不必等到下一个周期
@@ -120,8 +125,25 @@ fn settings_view(app: &AppHandle) -> SettingsView {
         sound: settings.sound,
         close_to_tray: settings.close_to_tray,
         auto_update: settings.auto_update,
+        mini_on_start: settings.mini_on_start,
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
     }
+}
+
+// 创建 / 销毁窗口的命令必须是 async：同步命令在主线程上执行，Windows 上创建窗口会死锁
+
+/// 悬浮窗的"展开"：关闭悬浮窗并显示主窗口。
+#[tauri::command]
+pub async fn show_main(app: AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || ui::show_main(&handle));
+}
+
+/// 主窗口的"缩为悬浮窗"。
+#[tauri::command]
+pub async fn show_mini(app: AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || ui::show_mini(&handle));
 }
 
 #[tauri::command]

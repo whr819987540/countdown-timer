@@ -26,11 +26,12 @@ export interface Settings {
   sound: boolean;
   closeToTray: boolean;
   autoUpdate: boolean;
+  miniOnStart: boolean;
   autostart: boolean;
 }
 
 export type SettingsPatch = Partial<
-  Pick<Settings, "sound" | "closeToTray" | "autoUpdate" | "autostart">
+  Pick<Settings, "sound" | "closeToTray" | "autoUpdate" | "miniOnStart" | "autostart">
 >;
 
 /** 对应后端 `updater::UpdateStatus` */
@@ -63,6 +64,10 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: SettingsPatch) => invoke<Settings>("update_settings", { patch }),
   quit: () => invoke<void>("quit_app"),
+  /** 关闭悬浮窗并显示主窗口 */
+  showMain: () => invoke<void>("show_main"),
+  /** 隐藏主窗口，缩为置顶的悬浮窗 */
+  showMini: () => invoke<void>("show_mini"),
   onState: (handler: (snapshot: Snapshot) => void): Promise<UnlistenFn> =>
     listen<Snapshot>(STATE_EVENT, (event) => handler(event.payload)),
   getUpdateStatus: () => invoke<UpdateStatus>("get_update_status"),

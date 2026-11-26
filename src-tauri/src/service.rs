@@ -149,6 +149,15 @@ fn publish(app: &AppHandle) {
     if !changed {
         return;
     }
+    // 一次计时开始时缩为悬浮窗，结束（回到空闲）时关闭悬浮窗
+    let was_idle = previous.map_or(true, |previous| previous.phase == Phase::Idle);
+    if was_idle && snapshot.phase != Phase::Idle {
+        if state.settings().mini_on_start {
+            ui::show_mini(app);
+        }
+    } else if !was_idle && snapshot.phase == Phase::Idle {
+        ui::exit_mini(app);
+    }
     if previous.is_some_and(|previous| previous.phase == Phase::Finished) {
         sound::stop_alarm();
     }
