@@ -92,9 +92,12 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 - **线程模型**（见 `service.rs` 顶部注释）：
   - 命令和托盘菜单修改状态机后调用 `service::refresh`；
   - 后台线程 `countdown-ticker` 用 `Condvar` 等待到下一个整秒边界，检测本轮是否结束；
-  - 所有界面副作用（推送 `timer-state` 事件、更新托盘、开关提醒弹窗、提示音）都排队到主线程的
+  - 所有界面副作用（推送 `timer-state` 事件、更新托盘、开关悬浮窗 / 提醒弹窗、提示音）都排队到主线程的
     `publish` 执行，执行时读取**最新**状态，因此不会乱序。不要在持有 `timer` 锁时调用任何会派发到主线程并等待的
     Tauri API。
+  - `refresh` 必须经后台线程再 `run_on_main_thread`：在主线程上调用时 Tauri 会**同步**执行闭包，
+    而同步命令 / 托盘回调都在主线程，此时 `publish` 创建窗口会在 Windows 上死锁（0.1.6 的事故：
+    开始计时后程序卡死、托盘无法退出）。**任何会创建窗口的代码都不能在同步命令或事件回调里直接执行。**
 - **前后端契约**：命令名、参数和 `Snapshot` / `Settings` 结构在 `src/lib/api.ts` 与 Rust 两侧必须同步修改。
   Rust 结构体统一 `#[serde(rename_all = "camelCase")]`。命令不返回快照，状态一律通过 `timer-state` 事件下发。
 - **提醒弹窗按需创建**，用户操作后 `destroy()`，不常驻内存；用 `Alt+F4` 关闭等同于「停止」。

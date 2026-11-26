@@ -1,10 +1,11 @@
-//! 计时服务：持有状态机和设置，运行后台计时线程，并把状态同步到前端、托盘和提醒弹窗。
+//! 计时服务：持有状态机和设置，运行后台计时线程，并把状态同步到前端、托盘、悬浮窗和提醒弹窗。
 //!
 //! 线程模型：
 //! - 命令 / 托盘菜单在主线程修改状态机后立即返回；
 //! - 计时线程在每个整秒边界被唤醒，检测本轮是否结束；
-//! - 所有界面副作用（推送事件、更新托盘、开关弹窗、提示音）统一排队到主线程的 [`publish`]
-//!   执行，并在执行时读取最新状态，因此不会出现旧状态覆盖新状态的问题。
+//! - 所有界面副作用（推送事件、更新托盘、开关窗口、提示音）统一排队到主线程的 [`publish`]
+//!   执行，并在执行时读取最新状态，因此不会出现旧状态覆盖新状态的问题；
+//! - [`publish`] 绝不能在命令或事件回调中同步执行：它可能创建窗口，见 [`refresh`]。
 
 use std::path::PathBuf;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
@@ -127,11 +128,19 @@ pub fn toggle(app: &AppHandle) -> Result<(), TimerError> {
 }
 
 /// 安排一次界面同步（在主线程执行）。
+///
+/// 总是先转到后台线程再派发到主线程：同步命令和托盘菜单的回调本身就运行在主线程上，
+/// 此时 `run_on_main_thread` 会**立即同步执行**，而 [`publish`] 可能创建窗口（悬浮窗、提醒弹窗）——
+/// 在同步命令或事件回调中创建窗口会在 Windows 上死锁（WebView2 的限制），整个程序失去响应。
+/// 从后台线程派发则排进事件循环，在当前回调返回后执行。
 pub fn refresh(app: &AppHandle) {
     let handle = app.clone();
-    if let Err(err) = app.run_on_main_thread(move || publish(&handle)) {
-        eprintln!("同步界面失败：{err}");
-    }
+    tauri::async_runtime::spawn(async move {
+        let target = handle.clone();
+        if let Err(err) = handle.run_on_main_thread(move || publish(&target)) {
+            eprintln!("同步界面失败：{err}");
+        }
+    });
 }
 
 fn publish(app: &AppHandle) {
