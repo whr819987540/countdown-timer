@@ -33,7 +33,8 @@
     <!-- 只有一个圆形进度环：单击展开主窗口，按住拖动可移动，悬停显示粗略的剩余时间 -->
     <button type="button" class="mini" id="mini" data-phase="running" data-stage="work" aria-label="展开主窗口">
       <svg class="mini-ring" viewBox="0 0 48 48" aria-hidden="true">
-        <circle class="ring-disc" cx="24" cy="24" r="23" />
+        <!-- 底盘外缘（含描边）离视口边缘留 1 个单位：圆形裁剪区域的边缘是锯齿状的，贴边的描边会断断续续 -->
+        <circle class="ring-disc" cx="24" cy="24" r="22.5" />
         <g transform="rotate(-90 24 24)">
           <circle class="ring-track" cx="24" cy="24" r="17" />
           <circle class="ring-progress" id="ring" cx="24" cy="24" r="17" pathLength="100" />

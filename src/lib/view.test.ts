@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { Snapshot } from "./api.ts";
 import {
   alertView,
+  closeHint,
   metaText,
   miniLabel,
   primaryAction,
@@ -137,5 +138,41 @@ describe("悬浮窗提示", () => {
       "远眺休息中 · 剩余 9 秒 · 点击展开",
     );
     assert.equal(miniLabel(snap({ phase: "finished" }), 0), "时间到 · 点击展开");
+  });
+});
+
+describe("closeHint", () => {
+  const both = { closeToTray: true, miniOnStart: true };
+
+  it("计时中开启悬浮窗时，关闭与最小化都缩为悬浮窗", () => {
+    for (const phase of ["running", "paused", "finished"] as const) {
+      assert.equal(closeHint(both, phase), "关闭或最小化窗口会缩为悬浮窗，计时继续");
+    }
+  });
+
+  it("空闲时说明关闭窗口的去向", () => {
+    assert.equal(closeHint(both, "idle"), "关闭窗口后仍会在托盘中继续计时");
+    assert.equal(
+      closeHint({ closeToTray: false, miniOnStart: true }, "idle"),
+      "关闭窗口将退出程序",
+    );
+  });
+
+  it("关闭会退出程序时，只有最小化缩为悬浮窗", () => {
+    assert.equal(
+      closeHint({ closeToTray: false, miniOnStart: true }, "running"),
+      "最小化窗口会缩为悬浮窗，关闭窗口将退出程序",
+    );
+  });
+
+  it("关闭悬浮窗设置后保持原来的行为", () => {
+    assert.equal(
+      closeHint({ closeToTray: true, miniOnStart: false }, "running"),
+      "关闭窗口后仍会在托盘中继续计时",
+    );
+    assert.equal(
+      closeHint({ closeToTray: false, miniOnStart: false }, "running"),
+      "关闭窗口将退出程序",
+    );
   });
 });

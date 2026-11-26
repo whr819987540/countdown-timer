@@ -109,8 +109,14 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
   `mini_on_start` 时打开悬浮窗并隐藏主窗口，记录主窗口原本是否可见；回到空闲时关闭悬浮窗，按记录恢复主窗口。
   `ui::show_main`（展开、托盘、单实例唤起）会先关闭悬浮窗。悬浮窗关闭时把位置写入设置，下次打开时若仍在某个
   显示器工作区内就沿用，否则放到右下角（计算在 `fit.rs`；不放右上角，以免挡住最大化窗口的关闭按钮）。
-  Windows 不允许窗口窄于约 136 像素，悬浮窗会被撑宽：页面把 48px 徽章贴在右侧，`ui::shape_mini` 用
-  `SetWindowRgn` 把窗口裁成贴右侧的圆形，圆形外的点击穿透到下面的窗口；尺寸 / 缩放比例变化时重新裁剪。悬浮窗刻意不显示数字（用户反馈跳动的秒数分散注意力），
+  计时中最小化主窗口、或关闭主窗口（`close_to_tray` 时）会经 `ui::shrink_main_later` 缩回悬浮窗
+  （窗口事件回调在主线程，所以先切到后台线程再派发回主线程创建窗口）；关闭 `mini_on_start` 后保持原行为。
+  Windows 不允许窗口窄于约 136 像素，悬浮窗会被撑宽：页面把徽章贴在右侧，`ui::shape_mini` 用
+  `SetWindowRgn` 把窗口裁成贴右侧的圆形，圆形外的点击穿透到下面的窗口；尺寸变化时重新裁剪。
+  **徽章直径与裁剪直径都取窗口高度**（CSS 用 `100vh`，不写死 48px，也不按"48 × 缩放比例"算），
+  这样窗口尺寸没跟上缩放比例（系统关闭"拖动时显示窗口内容"时 tao 不在 `WM_DPICHANGED` 中调整尺寸）
+  或页面被缩放时，圆形仍然完整；`ui::refit_mini_later` 在缩放比例变化后再把窗口设回 48 逻辑像素（徽章中心不动）。
+  底盘外缘离裁剪边缘留 1 个 SVG 单位，避免锯齿状的区域边缘切断描边。悬浮窗刻意不显示数字（用户反馈跳动的秒数分散注意力），
   剩余时间只在悬停提示中按分钟显示；单击 / 拖动由 `mini.ts` 自行区分（移动超过 3px 才调用 `startDragging`）。
   窗口透明且无阴影，页面的 `color-scheme` 设为 `normal`，否则深色模式下画布会被涂成不透明的深色。
 - **创建 / 销毁窗口的命令必须是 `async`**：同步命令在主线程执行，Windows 上在其中创建窗口会死锁；
@@ -187,8 +193,9 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
   - `release`（仅 `main`，依赖前三个 job 全部通过）：删除旧的 `rolling` 发布与标签，用新安装包重新创建并标记为 Latest；
     GitHub 接口偶发 5xx 时最多重试 5 次
   - `e2e`（windows，依赖 `build`）：静默安装刚打出的安装包，用 `tauri-driver` + 与 WebView2 版本匹配的 `msedgedriver`
-    运行 `e2e/smoke.ts`，像用户一样走一遍主流程（开始 → 悬浮窗 → 时间到弹窗 → 停止 → 展开 / 缩回 → 20-20-20 → 退出），
-    每步有超时，程序卡死即失败；各状态截图上传为产物 `e2e-screenshots`。`release` 依赖它通过
+    运行 `e2e/smoke.ts`，像用户一样走一遍主流程（开始 → 悬浮窗 → 时间到弹窗 → 停止 → 展开 / 缩回（按钮、最小化、关闭）
+    → 20-20-20 → 退出），每步有超时，程序卡死即失败；最小化 / 关闭主窗口通过环境变量 `APP_PID` 找到窗口、
+    用 PowerShell 发送原生窗口消息；各状态截图上传为产物 `e2e-screenshots`。`release` 依赖它通过
 - 发布产物：`CountdownTimer_<版本>_x64-setup.exe`、固定名称的 `CountdownTimer-setup.exe`
   （README 中的永久下载链接依赖后者，改名时同步修改）与 `latest.json`（自动更新清单，
   `url` 指向带版本号的安装包，客户端从 `releases/download/rolling/latest.json` 读取）。

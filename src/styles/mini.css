@@ -10,15 +10,19 @@ body {
   background: transparent;
 }
 
-/* 徽章固定 48×48 并贴在右侧：Windows 会把窗口撑宽到约 136 像素，多出的部分由后端裁掉（ui::shape_mini） */
+/*
+ * 徽章是直径等于窗口高度的圆，贴在右侧：Windows 会把窗口撑宽到约 136 像素，多出的部分由后端按窗口高度
+ * 裁成同样大小的圆（ui::shape_mini）。窗口高度按 48 逻辑像素创建；不在页面里写死 48px，是为了在缩放比例
+ * 变化（换到另一块屏幕、页面缩放）而窗口尺寸没跟上时，徽章和裁剪区域仍然一样大，圆环不会被裁掉一块。
+ */
 .mini {
   position: fixed;
   top: 0;
   right: 0;
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 100vh;
+  height: 100vh;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -27,9 +31,10 @@ body {
   touch-action: none;
 }
 
+/* 画在徽章边缘以内：圆形裁剪区域的边缘是锯齿状的，贴边的线条会被切掉 */
 .mini:focus-visible {
   outline: 2px solid var(--color-focus);
-  outline-offset: -2px;
+  outline-offset: -3px;
 }
 
 .mini-ring {
@@ -72,10 +77,11 @@ body {
     opacity var(--duration-base) var(--ease-out);
 }
 
+/* 48px 徽章中为 16px，随徽章等比缩放 */
 .mini-icon {
   position: relative;
-  width: 16px;
-  height: 16px;
+  width: calc(100vh / 3);
+  height: calc(100vh / 3);
   color: var(--color-fg-muted);
 }
 

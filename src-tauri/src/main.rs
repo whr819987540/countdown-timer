@@ -78,11 +78,16 @@ fn main() {
 fn handle_window_event(window: &Window, event: &WindowEvent) {
     match event {
         WindowEvent::CloseRequested { api, .. } => on_close_requested(window, api),
-        // 悬浮窗的圆形裁剪区域按物理像素计算，尺寸或缩放比例（移到其他显示器）变化时重新裁剪
-        WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
-            if window.label() == ui::MINI =>
+        // 悬浮窗的圆形裁剪区域按窗口的物理尺寸计算，尺寸变化时重新裁剪
+        WindowEvent::Resized(_) if window.label() == ui::MINI => ui::shape_mini(window),
+        WindowEvent::ScaleFactorChanged { .. } if window.label() == ui::MINI => {
+            ui::refit_mini_later(window.app_handle());
+        }
+        // 计时中最小化主窗口：缩为悬浮窗（主窗口随之隐藏，单击悬浮窗时恢复）
+        WindowEvent::Resized(_)
+            if window.label() == ui::MAIN && window.is_minimized().unwrap_or(false) =>
         {
-            ui::shape_mini(window);
+            ui::shrink_main_later(window.app_handle());
         }
         _ => {}
     }
@@ -94,7 +99,10 @@ fn on_close_requested(window: &Window, api: &CloseRequestApi) {
         ui::MAIN => {
             if app.state::<AppState>().settings().close_to_tray {
                 api.prevent_close();
-                let _ = window.hide();
+                // 计时中缩为悬浮窗（会隐藏主窗口），否则只是隐藏到托盘
+                if !ui::shrink_main_later(app) {
+                    let _ = window.hide();
+                }
             } else {
                 app.exit(0);
             }

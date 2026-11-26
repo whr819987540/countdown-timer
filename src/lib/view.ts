@@ -1,4 +1,4 @@
-import type { Phase, Snapshot } from "./api.ts";
+import type { Phase, Settings, Snapshot } from "./api.ts";
 import { describeDuration, formatClock, formatEndTime } from "./time.ts";
 
 /** 快照中决定界面形态的部分 */
@@ -138,4 +138,19 @@ export function miniLabel(snapshot: Snapshot, remainingMs: number): string {
   return snapshot.phase === "finished"
     ? `${status} · 点击展开`
     : `${status} · ${roughRemaining(remainingMs)} · 点击展开`;
+}
+
+/**
+ * 主窗口底部的提示：关闭 / 最小化窗口会怎样。
+ * 计时中且开启了悬浮窗时，最小化（以及关闭到托盘）改为缩回悬浮窗，与后端 `ui::shrink_main_later` 一致。
+ */
+export function closeHint(
+  { closeToTray, miniOnStart }: Pick<Settings, "closeToTray" | "miniOnStart">,
+  phase: Phase,
+): string {
+  const toMini = miniOnStart && phase !== "idle";
+  if (!closeToTray) {
+    return toMini ? "最小化窗口会缩为悬浮窗，关闭窗口将退出程序" : "关闭窗口将退出程序";
+  }
+  return toMini ? "关闭或最小化窗口会缩为悬浮窗，计时继续" : "关闭窗口后仍会在托盘中继续计时";
 }

@@ -73,6 +73,20 @@ pub fn bottom_right(area: Rect, size: (u32, u32), margin: u32) -> (i32, i32) {
     )
 }
 
+/// 悬浮窗尺寸从 `old` 变为 `size` 后，让徽章中心保持不动的左上角坐标。
+/// 徽章是贴在窗口右侧、直径等于窗口高度的圆（见 mini.css）。
+pub fn keep_badge_center(old: Rect, size: (u32, u32)) -> (i32, i32) {
+    let (width, height) = (i64::from(size.0), i64::from(size.1));
+    // 用两倍坐标计算，避免奇数直径的一半被截断
+    let center_x2 = 2 * (i64::from(old.x) + i64::from(old.width)) - i64::from(old.height);
+    let center_y2 = 2 * i64::from(old.y) + i64::from(old.height);
+    let x = (center_x2 + height) / 2 - width;
+    let y = (center_y2 - height) / 2;
+    let clamp =
+        |value: i64| i32::try_from(value).unwrap_or(if value < 0 { i32::MIN } else { i32::MAX });
+    (clamp(x), clamp(y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +188,34 @@ mod tests {
             height: 50,
         };
         assert_eq!(bottom_right(tiny, (238, 84), 28), (10, 20));
+    }
+
+    #[test]
+    fn badge_center_stays_when_mini_grows() {
+        // 100% 下 136×48 的窗口换到 200% 的屏幕后变为 272×96：徽章中心 (1888, 924) 不变
+        let old = Rect {
+            x: 1776,
+            y: 900,
+            width: 136,
+            height: 48,
+        };
+        assert_eq!(
+            keep_badge_center(old, (272, 96)),
+            (1888 + 48 - 272, 924 - 48)
+        );
+        // 尺寸不变时位置不变
+        assert_eq!(keep_badge_center(old, (136, 48)), (1776, 900));
+        // 缩小时同样以中心为准，奇数直径不累积误差
+        let big = Rect {
+            x: -500,
+            y: 10,
+            width: 204,
+            height: 73,
+        };
+        let (x, y) = keep_badge_center(big, (136, 49));
+        let old_center2 = (2 * (-500 + 204) - 73, 2 * 10 + 73);
+        let new_center2 = (2 * (x + 136) - 49, 2 * y + 49);
+        assert!((old_center2.0 - new_center2.0).abs() <= 1);
+        assert!((old_center2.1 - new_center2.1).abs() <= 1);
     }
 }

@@ -254,6 +254,7 @@ jobs:
 
           $failed = $false
           try {
+            $env:APP_PID = $app.Id
             node e2e/smoke.ts 127.0.0.1:9222
             $failed = $LASTEXITCODE -ne 0
           } finally {

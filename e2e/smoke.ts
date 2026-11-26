@@ -2,7 +2,7 @@
  * Windows 端到端冒烟测试（在 CI 的 e2e 任务中运行，见 .github/workflows/ci.yml）。
  *
  * 通过 msedgedriver（WebView2 的 WebDriver）驱动安装好的程序，像用户一样点击界面走一遍主流程：
- * 开始计时 → 悬浮窗 → 时间到弹窗 → 停止 → 悬浮窗展开 / 缩回 → 20-20-20 模式 → 退出程序。
+ * 开始计时 → 悬浮窗 → 时间到弹窗 → 停止 → 悬浮窗展开 / 缩回（按钮、最小化、关闭）→ 20-20-20 模式 → 退出程序。
  * 点击经由页面脚本触发，与真实点击走同一条 IPC 路径（同步命令在主线程执行），
  * 因此能发现 0.1.6 那样"开始计时后主线程死锁"的问题：每一步都有超时，卡死时测试失败而不是一直挂起。
  * 关键状态的截图保存在 e2e/screenshots/，CI 中作为构建产物上传，可直接查看真实的 Windows 渲染。
@@ -10,9 +10,11 @@
  * 用法（附加模式，CI 中使用）：
  *   1. 以环境变量 WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222 启动程序；
  *   2. 启动 msedgedriver --port=4444（版本须与 WebView2 运行时一致）；
- *   3. node e2e/smoke.ts 127.0.0.1:9222
+ *   3. 以环境变量 APP_PID=<程序进程号> 运行 node e2e/smoke.ts 127.0.0.1:9222
+ *      （最小化、关闭主窗口是原生窗口操作，WebDriver 做不到，借进程号找到主窗口发送窗口消息）
  * 不用 msedgedriver 自己启动程序：Tauri 给 WebView2 指定了自己的数据目录，驱动找不到 DevToolsActivePort 文件。
  */
+import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { Session } from "./webdriver.ts";
@@ -93,6 +95,30 @@ async function shot(name: string): Promise<void> {
   await writeFile(new URL(`${name}.png`, shotsDir), await session.screenshot());
 }
 
+/**
+ * 像用户点标题栏按钮一样最小化 / 关闭主窗口。
+ * 找的是进程中唯一可见的顶层窗口，所以调用时悬浮窗与提醒弹窗必须都已关闭。
+ */
+function nativeMain(action: "minimize" | "close"): void {
+  const pid = process.env.APP_PID ?? "";
+  if (!/^\d+$/.test(pid)) throw new Error("缺少环境变量 APP_PID（程序进程号）");
+  const call =
+    action === "minimize"
+      ? "[void][E2E.Native]::ShowWindow($h, 6)" // SW_MINIMIZE
+      : "[void][E2E.Native]::PostMessageW($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)"; // WM_CLOSE
+  const script = `
+    Add-Type -Namespace E2E -Name Native -MemberDefinition '
+      [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+      [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);'
+    $h = (Get-Process -Id ${pid}).MainWindowHandle
+    if ($h -eq [IntPtr]::Zero) { throw '找不到主窗口' }
+    ${call}`;
+  execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    stdio: "inherit",
+    timeout: 30_000,
+  });
+}
+
 async function step(name: string, action: () => Promise<void>): Promise<void> {
   const started = Date.now();
   try {
@@ -126,15 +152,23 @@ try {
     });
     await waitFor("悬浮窗出现", () => hasWindow("mini"));
     await inWindow("mini", async () => {
-      // Windows 会把窗口撑宽到约 136 像素：徽章必须保持 48px 并贴在右侧，多出的部分由后端裁掉
-      const layout = await session.execute<{ right: number; width: number; viewport: number }>(
+      // Windows 会把窗口撑宽到约 136 像素：徽章必须是贴在右侧、直径等于窗口高度（48px）的完整圆形，
+      // 后端按窗口高度把多出的部分裁掉；两者不一致时圆环会缺一块（高缩放比例屏幕上出现过）
+      const layout = await session.execute<Record<string, number>>(
         `const rect = document.getElementById("mini").getBoundingClientRect();
-         return { right: rect.right, width: rect.width, viewport: innerWidth };`,
+         return { top: rect.top, right: rect.right, width: rect.width, height: rect.height,
+                  viewportWidth: innerWidth, viewportHeight: innerHeight, dpr: devicePixelRatio };`,
       );
-      console.log(`  悬浮窗：窗口宽 ${layout.viewport}px，徽章宽 ${layout.width}px`);
-      if (layout.width !== 48 || Math.abs(layout.right - layout.viewport) > 1) {
-        throw new Error(`悬浮窗徽章位置不对：${JSON.stringify(layout)}`);
-      }
+      console.log(`  悬浮窗：${JSON.stringify(layout)}`);
+      const near = (a: number | undefined, b: number | undefined) =>
+        a !== undefined && b !== undefined && Math.abs(a - b) <= 1;
+      const ok =
+        near(layout.viewportHeight, 48) &&
+        near(layout.width, layout.viewportHeight) &&
+        near(layout.height, layout.viewportHeight) &&
+        near(layout.top, 0) &&
+        near(layout.right, layout.viewportWidth);
+      if (!ok) throw new Error(`悬浮窗徽章位置或大小不对：${JSON.stringify(layout)}`);
       await shot("02-mini-running");
     });
   });
@@ -163,22 +197,41 @@ try {
     });
   });
 
-  await step("单击悬浮窗展开主窗口，再缩回悬浮窗，然后停止", async () => {
+  /** 单击悬浮窗展开主窗口 */
+  async function expandMini(): Promise<void> {
+    await inWindow("mini", () => press("#mini"));
+    await waitFor("单击后悬浮窗关闭", async () => !(await hasWindow("mini")));
+  }
+
+  await step("展开主窗口后，用按钮、最小化、关闭窗口都能缩回悬浮窗，然后停止", async () => {
     await inWindow("main", async () => {
       await press('.chip[data-minutes="1"]');
       await press("#primary");
     });
     await waitFor("悬浮窗出现", () => hasWindow("mini"));
-    await inWindow("mini", () => press("#mini"));
-    await waitFor("单击后悬浮窗关闭", async () => !(await hasWindow("mini")));
+    await expandMini();
     await inWindow("main", async () => {
       await waitFor("「缩为悬浮窗」按钮可见", () =>
         session.execute<boolean>(`return !document.getElementById("to-mini").hidden`),
       );
+      const hint = await text("#tray-hint");
+      if (hint !== "关闭或最小化窗口会缩为悬浮窗，计时继续") {
+        throw new Error(`计时中的底部提示不对：${hint}`);
+      }
       await shot("06-main-running");
       await press("#to-mini");
     });
-    await waitFor("缩回悬浮窗", () => hasWindow("mini"));
+    await waitFor("按钮缩回悬浮窗", () => hasWindow("mini"));
+
+    await expandMini();
+    nativeMain("minimize");
+    await waitFor("最小化后缩回悬浮窗", () => hasWindow("mini"));
+
+    await expandMini();
+    nativeMain("close");
+    await waitFor("关闭后缩回悬浮窗", () => hasWindow("mini"));
+
+    // 关闭只是缩回悬浮窗，程序和主窗口都还在
     await inWindow("main", () => press("#secondary"));
     await waitFor("停止后悬浮窗关闭", async () => !(await hasWindow("mini")));
   });

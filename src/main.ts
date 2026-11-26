@@ -14,7 +14,7 @@ import {
   toHms,
 } from "./lib/time.ts";
 import { updateView } from "./lib/update.ts";
-import { metaText, primaryAction, statusText } from "./lib/view.ts";
+import { closeHint, metaText, primaryAction, statusText } from "./lib/view.ts";
 
 function byId<T extends Element = HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -79,6 +79,11 @@ let receivedAt = performance.now();
 let renderTimer: number | undefined;
 let busy = false;
 let updateStatus: UpdateStatus = { state: "idle" };
+/** 决定底部提示内容的设置项（关闭 / 最小化窗口时的行为） */
+let closeBehavior: Pick<Settings, "closeToTray" | "miniOnStart"> = {
+  closeToTray: true,
+  miniOnStart: true,
+};
 
 // ---------- 状态渲染 ----------
 
@@ -128,6 +133,7 @@ function renderPhase(): void {
   ui.presets.inert = !editing;
   ui.secondary.hidden = idle;
   ui.toMini.hidden = idle;
+  renderHint();
   for (const radio of modeRadios) {
     radio.checked = radio.value === mode;
     radio.disabled = !idle;
@@ -337,9 +343,12 @@ function applySettings(settings: Settings): void {
   ui.optAutostart.checked = settings.autostart;
   ui.optUpdate.checked = settings.autoUpdate;
   ui.optMini.checked = settings.miniOnStart;
-  ui.trayHint.textContent = settings.closeToTray
-    ? "关闭窗口后仍会在托盘中继续计时"
-    : "关闭窗口将退出程序";
+  closeBehavior = settings;
+  renderHint();
+}
+
+function renderHint(): void {
+  setText(ui.trayHint, closeHint(closeBehavior, snapshot.phase));
 }
 
 function setSettingsOpen(open: boolean): void {

@@ -4,19 +4,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::window::Color;
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, Theme, UserAttentionType, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder,
+    AppHandle, LogicalSize, Manager, PhysicalPosition, PhysicalSize, Theme, UserAttentionType,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
-use crate::fit::{bottom_right, contains, fit_window, Rect};
+use crate::fit::{bottom_right, contains, fit_window, keep_badge_center, Rect};
 use crate::service::AppState;
+use crate::timer::Phase;
 
 pub const MAIN: &str = "main";
 pub const ALERT: &str = "alert";
 pub const MINI: &str = "mini";
 
-/// 悬浮窗中圆形徽章的直径（逻辑像素），与 mini.css 一致。窗口按这个尺寸创建，
-/// 但 Windows 不允许窗口窄于约 136 像素，实际会被撑宽，见 [`shape_mini`]
+/// 悬浮窗中圆形徽章的直径（逻辑像素）。窗口按这个尺寸创建，页面里徽章的直径等于窗口高度（见 mini.css）；
+/// Windows 不允许窗口窄于约 136 像素，宽度实际会被撑大，见 [`shape_mini`]
 const MINI_DISC: f64 = 48.0;
 /// 悬浮窗默认放在工作区右下角（任务栏上方），距边缘的距离（逻辑像素）。
 /// 不放右上角：那里是最大化窗口的最小化 / 关闭按钮，置顶的悬浮窗会挡住它们
@@ -72,6 +73,40 @@ fn reveal_main(app: &AppHandle) {
     }
 }
 
+/// 计时进行中且开启了悬浮窗时，把主窗口缩为悬浮窗（用户关闭 / 最小化主窗口时调用）；返回是否会这样做。
+///
+/// 窗口事件回调运行在主线程上，在其中直接创建窗口会在 Windows 上死锁（见 AGENTS.md），
+/// 所以先切到后台线程，再派发回主线程执行。
+pub fn shrink_main_later(app: &AppHandle) -> bool {
+    if !wants_mini(app) {
+        return false;
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let target = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            // 派发期间计时可能已经结束
+            if wants_mini(&target) {
+                show_mini(&target);
+            }
+            // 悬浮窗没能打开时：由关闭触发的（主窗口未最小化）照旧隐藏到托盘，不能点了关闭却没反应
+            if target.get_webview_window(MINI).is_none() {
+                if let Some(main) = target.get_webview_window(MAIN) {
+                    if !main.is_minimized().unwrap_or(false) {
+                        let _ = main.hide();
+                    }
+                }
+            }
+        });
+    });
+    true
+}
+
+fn wants_mini(app: &AppHandle) -> bool {
+    let state = app.state::<AppState>();
+    state.settings().mini_on_start && state.snapshot().phase != Phase::Idle
+}
+
 /// 缩为悬浮窗：在屏幕角落打开置顶的小圆环，并隐藏主窗口。
 pub fn show_mini(app: &AppHandle) {
     if app.get_webview_window(MINI).is_some() {
@@ -109,22 +144,26 @@ pub fn show_mini(app: &AppHandle) {
     }
 }
 
-/// 把悬浮窗裁剪成贴右侧的圆形。
+/// 把悬浮窗裁剪成贴右侧、直径等于窗口高度的圆形。
 ///
 /// Windows 不允许窗口窄于约 136 像素，48×48 的悬浮窗会被撑宽，两侧多出的透明区域虽然看不见，
 /// 却会挡住下面窗口的点击。裁剪后圆形以外既不显示也不接收点击，看起来和用起来都只是一个小圆环。
-/// 页面把徽章画在右侧（见 mini.css）；窗口尺寸或缩放比例变化时需要重新裁剪。
+/// 页面把徽章画在右侧、直径同样取窗口高度（见 mini.css），所以无论缩放比例如何，两者都严丝合缝；
+/// 不按"48 × 缩放比例"计算：窗口尺寸没跟上缩放比例时（见 [`refit_mini_later`]）会和页面对不上，圆环被裁掉一块。
+/// 窗口尺寸变化时需要重新裁剪。
 #[cfg(windows)]
 pub fn shape_mini(window: &tauri::Window) {
     use windows_sys::Win32::Graphics::Gdi::{CreateEllipticRgn, DeleteObject, SetWindowRgn};
 
-    let (Ok(hwnd), Ok(size), Ok(scale)) =
-        (window.hwnd(), window.outer_size(), window.scale_factor())
-    else {
+    // 悬浮窗没有边框和标题栏，窗口区域与页面区域重合
+    let (Ok(hwnd), Ok(size)) = (window.hwnd(), window.outer_size()) else {
         return;
     };
-    let diameter = (MINI_DISC * scale).round() as i32;
+    let diameter = i32::try_from(size.height).unwrap_or(i32::MAX);
     let width = i32::try_from(size.width).unwrap_or(i32::MAX);
+    if diameter == 0 {
+        return;
+    }
     let left = (width - diameter).max(0);
     // SAFETY: 只传入整数坐标（相对窗口左上角）；右、下边界不包含在区域内，所以各加 1
     let region = unsafe { CreateEllipticRgn(left, 0, left + diameter + 1, diameter + 1) };
@@ -141,6 +180,44 @@ pub fn shape_mini(window: &tauri::Window) {
 
 #[cfg(not(windows))]
 pub fn shape_mini(_window: &tauri::Window) {}
+
+/// 悬浮窗换到缩放比例不同的屏幕后，按新的缩放比例恢复 48 逻辑像素的大小。
+///
+/// 一般情况下 tao 处理 `WM_DPICHANGED` 时已经按比例调整了窗口尺寸；但系统关闭了"拖动时显示窗口内容"时
+/// 它会保留原来的物理尺寸，悬浮窗在高缩放比例的屏幕上就会变小。这里在缩放比例变化处理完之后再设一次尺寸
+/// （在事件回调里直接设置会被 tao 随后的调整覆盖，所以延后到主线程的下一轮执行）。
+pub fn refit_mini_later(app: &AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let target = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if let Some(window) = target.get_webview_window(MINI) {
+                resize_mini(&window);
+            }
+        });
+    });
+}
+
+/// 把悬浮窗设回 48 逻辑像素，徽章中心保持不动（宽度受系统最小宽度限制，也会随缩放比例变化）。
+fn resize_mini(window: &WebviewWindow) {
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+        return;
+    };
+    let _ = window.set_size(LogicalSize::new(MINI_DISC, MINI_DISC));
+    let Ok(resized) = window.outer_size() else {
+        return;
+    };
+    if resized != size {
+        let old = Rect {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        };
+        let (x, y) = keep_badge_center(old, (resized.width, resized.height));
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+}
 
 /// 一次计时结束（回到空闲）：关闭悬浮窗；主窗口是被悬浮窗替换掉的就恢复显示。
 pub fn exit_mini(app: &AppHandle) {
