@@ -15,8 +15,8 @@ pub const MAIN: &str = "main";
 pub const ALERT: &str = "alert";
 pub const MINI: &str = "mini";
 
-/// 悬浮窗内容区尺寸（逻辑像素），与 mini.html 的布局一致
-const MINI_SIZE: (f64, f64) = (240.0, 64.0);
+/// 悬浮窗尺寸（逻辑像素）：只有一个圆形进度环，与 mini.html 的布局一致
+const MINI_SIZE: (f64, f64) = (48.0, 48.0);
 /// 悬浮窗默认放在工作区右上角，距边缘的距离（逻辑像素）
 const MINI_MARGIN: f64 = 16.0;
 /// 主窗口是否是被悬浮窗替换掉的：一次计时结束、关闭悬浮窗时据此恢复主窗口
@@ -37,14 +37,13 @@ fn reveal_main(app: &AppHandle) {
     }
 }
 
-/// 缩为悬浮窗：在屏幕角落打开置顶的小窗口，并隐藏主窗口。
+/// 缩为悬浮窗：在屏幕角落打开置顶的小圆环，并隐藏主窗口。
 pub fn show_mini(app: &AppHandle) {
     if app.get_webview_window(MINI).is_some() {
         return;
     }
     let main = app.get_webview_window(MAIN);
-    let theme = main.as_ref().and_then(|window| window.theme().ok());
-    // 先隐藏着创建，摆好位置再显示，避免窗口跳动
+    // 透明、无阴影：屏幕上只露出页面画的圆形徽章。先隐藏着创建，摆好位置再显示，避免窗口跳动
     let built = WebviewWindowBuilder::new(app, MINI, WebviewUrl::App("mini.html".into()))
         .title("倒计时")
         .inner_size(MINI_SIZE.0, MINI_SIZE.1)
@@ -52,10 +51,11 @@ pub fn show_mini(app: &AppHandle) {
         .maximizable(false)
         .minimizable(false)
         .decorations(false)
+        .transparent(true)
+        .shadow(false)
         .always_on_top(true)
         .skip_taskbar(true)
         .visible(false)
-        .background_color(background_for(theme))
         .build();
     let window = match built {
         Ok(window) => window,

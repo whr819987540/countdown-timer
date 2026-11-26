@@ -121,3 +121,21 @@ export function alertView(snapshot: Snapshot): AlertView {
     hint: "Enter 开始 20 秒休息 · Esc 停止",
   };
 }
+
+/** 粗略的剩余时间：悬浮窗只在鼠标悬停时显示，按分钟描述，避免盯着跳动的秒数 */
+export function roughRemaining(ms: number): string {
+  if (ms < 60_000) return `剩余 ${Math.max(0, Math.ceil(ms / 1000))} 秒`;
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `剩余约 ${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `剩余约 ${hours} 小时` : `剩余约 ${hours} 小时 ${rest} 分钟`;
+}
+
+/** 悬浮窗的悬停提示与读屏名称 */
+export function miniLabel(snapshot: Snapshot, remainingMs: number): string {
+  const status = statusText(snapshot);
+  return snapshot.phase === "finished"
+    ? `${status} · 点击展开`
+    : `${status} · ${roughRemaining(remainingMs)} · 点击展开`;
+}

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Snapshot } from "./api.ts";
-import { alertView, metaText, primaryAction, statusText } from "./view.ts";
+import {
+  alertView,
+  metaText,
+  miniLabel,
+  primaryAction,
+  roughRemaining,
+  statusText,
+} from "./view.ts";
 
 const MIN = 60_000;
 
@@ -108,5 +115,27 @@ describe("alertView", () => {
     assert.equal(done.kind, "alarm");
     assert.equal(done.title, "休息结束");
     assert.equal(done.primary?.label, "下一轮");
+  });
+});
+
+describe("悬浮窗提示", () => {
+  it("剩余时间按分钟粗略描述", () => {
+    assert.equal(roughRemaining(14_200), "剩余 15 秒");
+    assert.equal(roughRemaining(60_000), "剩余约 1 分钟");
+    assert.equal(roughRemaining(12 * MIN + 1), "剩余约 13 分钟");
+    assert.equal(roughRemaining(60 * MIN), "剩余约 1 小时");
+    assert.equal(roughRemaining(95 * MIN), "剩余约 1 小时 35 分钟");
+  });
+
+  it("包含状态与操作提示，时间到时不显示剩余时间", () => {
+    assert.equal(
+      miniLabel(snap({ phase: "running" }), 12 * MIN),
+      "倒计时中 · 剩余约 12 分钟 · 点击展开",
+    );
+    assert.equal(
+      miniLabel(snap({ mode: "eyeCare", stage: "rest", phase: "running" }), 9_000),
+      "远眺休息中 · 剩余 9 秒 · 点击展开",
+    );
+    assert.equal(miniLabel(snap({ phase: "finished" }), 0), "时间到 · 点击展开");
   });
 });

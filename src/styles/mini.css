@@ -1,101 +1,84 @@
 @import "./base.css";
 
+/* 透明窗口：只露出圆形徽章。color-scheme 设为 normal，避免深色模式下画布被涂成不透明的深色 */
+:root {
+  color-scheme: normal;
+}
+
+html,
 body {
-  /* 无边框窗口：用细边框和主题背景界定悬浮窗范围 */
-  border: 1px solid var(--color-border-strong);
+  background: transparent;
 }
 
 .mini {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
   height: 100%;
-  padding: 0 var(--space-sm) 0 var(--space-md);
-  cursor: grab;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
 }
 
-/* 非交互元素不接收指针事件，按下时命中带 data-tauri-drag-region 的容器，整窗都可拖动 */
-.mini-ring,
-.mini-text {
-  pointer-events: none;
+.mini:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
 }
 
 .mini-ring {
-  flex: none;
-  width: 36px;
-  height: 36px;
-  transform: rotate(-90deg);
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
-.mini-ring circle {
+/* 底盘让圆环在任何桌面背景上都清晰可见 */
+.ring-disc {
+  fill: var(--color-surface);
+  stroke: var(--color-border-strong);
+  stroke-width: 1;
+  transition: stroke var(--duration-base) var(--ease-out);
+}
+
+.mini:hover .ring-disc {
+  stroke: var(--color-primary);
+}
+
+.ring-track,
+.ring-progress {
   fill: none;
-  stroke-width: 4;
+  stroke-width: 5;
 }
 
-.mini-ring .ring-track {
+.ring-track {
   stroke: var(--color-ring-track);
 }
 
-.mini-ring .ring-progress {
+.ring-progress {
   stroke: var(--color-primary);
   stroke-linecap: round;
   stroke-dasharray: 100;
   stroke-dashoffset: 0;
   transition:
-    stroke-dashoffset var(--duration-tick) linear,
+    stroke-dashoffset 1s linear,
     stroke var(--duration-base) var(--ease-out),
     opacity var(--duration-base) var(--ease-out);
 }
 
-.mini-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.mini-time {
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.15;
-  font-variant-numeric: tabular-nums;
-  transition: color var(--duration-base) var(--ease-out);
-}
-
-.mini-time.is-long {
-  font-size: 18px;
-}
-
-.mini-status {
-  overflow: hidden;
-  font-size: var(--text-xs);
-  font-weight: 600;
+.mini-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
   color: var(--color-fg-muted);
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
-.mini-btn {
-  flex: none;
-  width: 34px;
-  height: 34px;
-}
-
-/* 各阶段的视觉差异与主窗口一致（颜色之外都配有状态文字） */
-.mini[data-phase="running"] .mini-status {
-  color: var(--color-primary);
-}
-
+/* 各阶段的视觉差异与主窗口一致；颜色之外还有中央图标与悬停提示 */
 .mini[data-phase="paused"] .ring-progress {
   stroke: var(--color-border-strong);
-}
-
-.mini[data-phase="paused"] .mini-time {
-  color: var(--color-fg-muted);
-}
-
-.mini[data-phase="finished"] .mini-status,
-.mini[data-phase="finished"] .mini-time {
-  color: var(--color-alert-text);
 }
 
 .mini[data-phase="finished"] .ring-progress {
@@ -107,6 +90,10 @@ body {
   animation: pulse 1.6s var(--ease-out) infinite;
 }
 
+.mini[data-phase="finished"] .mini-icon {
+  color: var(--color-alert-text);
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.45;
@@ -114,10 +101,10 @@ body {
 }
 
 /* 20-20-20 模式的远眺休息 */
-.mini[data-stage="rest"][data-phase="running"] .mini-status {
-  color: var(--color-rest);
-}
-
 .mini[data-stage="rest"][data-phase="running"] .ring-progress {
   stroke: var(--color-rest);
+}
+
+.mini[data-stage="rest"][data-phase="running"] .mini-icon {
+  color: var(--color-rest);
 }
