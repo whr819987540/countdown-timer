@@ -2,8 +2,8 @@
 //!
 //! - 启动后稍等片刻检查一次，之后每 6 小时检查一次（可在设置中关闭；debug 构建不自动检查）；
 //! - 发现新版本只提示，不自动安装：安装会退出并重启程序，所以计时进行中不允许安装；
-//! - 安装包由 CI 用私钥签名，插件校验签名后才运行安装程序。Windows 上随后本进程退出，
-//!   NSIS 安装程序以被动模式安装完成后自动重新启动程序。
+//! - 安装包分段并行下载（见 [`crate::download`]），由 CI 用私钥签名，插件校验签名后才运行安装程序。
+//!   Windows 上随后本进程退出，NSIS 安装程序以被动模式安装完成后自动重新启动程序。
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,10 +12,12 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
+use reqwest::header::{HeaderValue, ACCEPT};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 
+use crate::download;
 use crate::service::AppState;
 use crate::timer::Phase;
 use crate::tray;
@@ -27,6 +29,7 @@ const FIRST_CHECK_DELAY: Duration = Duration::from_secs(10);
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 /// 安装更新前写入的标记文件：更新后首次启动时即使带 `--hidden` 也显示主窗口
 const SHOW_AFTER_UPDATE: &str = "show-after-update";
+const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
@@ -175,37 +178,36 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
             percent: Some(0),
         },
     );
-    let mut downloaded: u64 = 0;
-    let mut shown: Option<u8> = Some(0);
-    let bytes = update
-        .download(
-            |chunk, total| {
-                downloaded += chunk as u64;
-                let percent = total.filter(|&total| total > 0).map(|total| {
-                    u8::try_from(downloaded * 100 / total)
-                        .unwrap_or(100)
-                        .min(100)
-                });
-                // 只在百分比变化时推送，避免每个数据块都刷新界面
-                if percent != shown {
-                    shown = percent;
-                    set_status(
-                        app,
-                        UpdateStatus::Downloading {
-                            version: version.clone(),
-                            percent,
-                        },
-                    );
-                }
-            },
-            || {},
-        )
+    let shown = Mutex::new(Some(0u8));
+    let on_progress = |done: u64, total: Option<u64>| {
+        let percent = total
+            .filter(|&total| total > 0)
+            .map(|total| u8::try_from(done * 100 / total).unwrap_or(100).min(100));
+        // 只在百分比变化时推送，避免每个数据块都刷新界面
+        let mut shown = lock(&shown);
+        if percent != *shown {
+            *shown = percent;
+            set_status(
+                app,
+                UpdateStatus::Downloading {
+                    version: version.clone(),
+                    percent,
+                },
+            );
+        }
+    };
+    let bytes = download_package(&update, on_progress)
         .await
         .map_err(|err| {
             eprintln!("下载更新失败：{err}");
             restore(app);
             "下载更新失败，请稍后重试".to_owned()
         })?;
+    if let Err(err) = update.verify(&bytes) {
+        eprintln!("更新包签名校验失败：{err}");
+        restore(app);
+        return Err("更新包校验失败，请稍后重试".into());
+    }
 
     // 下载期间用户可能开始了计时，此时放弃安装，避免打断计时
     if !timer_idle(app) {
@@ -234,6 +236,27 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
             Err("安装更新失败，请稍后重试".into())
         }
     }
+}
+
+/// 分段并行下载安装包（插件自带的下载只用单个连接），代理与请求头沿用插件的设置。
+/// 只下载不校验，调用方随后用 [`Update::verify`] 校验签名。
+async fn download_package(
+    update: &Update,
+    on_progress: impl Fn(u64, Option<u64>) + Sync,
+) -> Result<Vec<u8>, String> {
+    let mut builder = download::client_builder().user_agent(USER_AGENT);
+    if update.no_proxy {
+        builder = builder.no_proxy();
+    } else if let Some(proxy) = &update.proxy {
+        let proxy = reqwest::Proxy::all(proxy.as_str()).map_err(|err| err.to_string())?;
+        builder = builder.proxy(proxy);
+    }
+    let client = builder.build().map_err(|err| err.to_string())?;
+    let mut headers = update.headers.clone();
+    headers
+        .entry(ACCEPT)
+        .or_insert(HeaderValue::from_static("application/octet-stream"));
+    download::fetch(&client, &update.download_url, &headers, on_progress).await
 }
 
 fn marker_path(app: &AppHandle) -> Option<PathBuf> {

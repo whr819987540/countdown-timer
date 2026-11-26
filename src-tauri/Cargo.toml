@@ -17,7 +17,10 @@ tauri-plugin-autostart = "2.7"
 tauri-plugin-single-instance = "2.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri-plugin-updater = { version = "2.12", default-features = false, features = ["native-tls", "system-proxy"] }
+tauri-plugin-updater = { version = "2.14", default-features = false, features = ["native-tls", "system-proxy"] }
+# 分段下载更新包。两者都是 tauri-plugin-updater 已有的依赖（同一版本、特性合并），不增加体积
+reqwest = { version = "0.13", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio"] }

@@ -47,6 +47,7 @@ src-tauri/
   src/fit.rs              窗口适配屏幕工作区的纯计算（+ 单元测试）
   src/sound.rs            Windows 闹钟提示音（PlaySoundW）
   src/updater.rs          自动更新：定时检查、下载、校验签名、安装（tauri-plugin-updater）
+  src/download.rs         分段并行下载（Range 请求、断点续传，+ 单元测试），供更新下载安装包
 assets/app-icon.svg       应用图标源文件
 design-system/            ui-ux-pro-max 生成的设计系统（MASTER.md 为视觉规范）
 e2e/                      Windows 端到端冒烟测试（smoke.ts + 最小 WebDriver 客户端 webdriver.ts，CI 中运行）
@@ -126,6 +127,10 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
   Windows 上插件运行安装程序后直接 `exit(0)`，所以退出前的清理（移除托盘图标）放在检查时设置的
   `on_before_exit` 中；安装前写入标记文件，重启后即使带 `--hidden` 也显示主窗口。
   前端不直接调用插件 API（capabilities 保持最小），只调用 `check_update` / `install_update` 等自有命令。
+- **更新包下载**不用插件自带的单连接 `Update::download`，而是 `download::fetch`：先用 `Range: bytes=0-0`
+  探测大小，再切成最多 4 段并行下载（强制 HTTP/1.1，否则各段会复用同一连接）；GitHub 跳转得到的签名地址有有效期，
+  重试时从原始地址重新跳转。下载后先 `Update::verify` 校验签名，`install` 内部还会再校验一次。
+  `reqwest` / `futures-util` 是插件已有的依赖，直接依赖时版本要与插件一致，不要额外开启特性（会增大体积）。
 - **更新签名密钥**：公钥在 `tauri.conf.json` 的 `plugins.updater.pubkey`，并开启 `requireSignedVersion`
   （拒绝签名中未记录版本号、或版本号与 `latest.json` 不一致的安装包，防止降级攻击）；私钥只存在维护者本机
   （`~/.tauri/countdown-timer.key`）和仓库 secret `TAURI_SIGNING_PRIVATE_KEY` 中，**绝不提交**。
