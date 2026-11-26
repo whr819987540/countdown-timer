@@ -52,6 +52,12 @@
           d="M247.31,124.76c-.35-.79-8.82-19.58-27.65-38.41C194.57,61.26,162.88,48,128,48S61.43,61.26,36.34,86.35C17.51,105.18,9,124,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208s66.57-13.26,91.66-38.34c18.83-18.83,27.3-37.61,27.65-38.4A8,8,0,0,0,247.31,124.76ZM128,168a40,40,0,1,1,40-40A40,40,0,0,1,128,168Z"
         />
       </symbol>
+      <symbol id="i-update" viewBox="0 0 256 256">
+        <path
+          fill="currentColor"
+          d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm37.66-101.66a8,8,0,0,1-11.32,11.32L136,107.31V168a8,8,0,0,1-16,0V107.31l-18.34,18.35a8,8,0,0,1-11.32-11.32l32-32a8,8,0,0,1,11.32,0Z"
+        />
+      </symbol>
       <symbol id="i-back" viewBox="0 0 256 256">
         <path
           fill="currentColor"
@@ -179,7 +185,14 @@
           </div>
         </div>
 
-        <p class="hint" id="tray-hint">关闭窗口后仍会在托盘中继续计时</p>
+        <!-- 托盘提示与更新提示共用同一位置，出现更新提示时布局不跳动 -->
+        <div class="footer">
+          <p class="hint" id="tray-hint">关闭窗口后仍会在托盘中继续计时</p>
+          <button type="button" class="update-banner" id="update-banner" hidden>
+            <svg class="icon" aria-hidden="true"><use href="#i-update" /></svg>
+            <span id="update-banner-text"></span>
+          </button>
+        </div>
       </main>
 
       <section class="settings" id="settings" aria-labelledby="settings-title" inert>
@@ -212,6 +225,20 @@
             </span>
             <input type="checkbox" class="switch" id="opt-autostart" />
           </label>
+          <label class="setting">
+            <span class="setting-text">
+              <span class="setting-name">自动检查更新</span>
+              <span class="setting-desc">每 6 小时检查一次，有新版本时提示</span>
+            </span>
+            <input type="checkbox" class="switch" id="opt-update" />
+          </label>
+          <div class="setting setting-static">
+            <span class="setting-text">
+              <span class="setting-name" id="version">版本</span>
+              <span class="setting-desc" id="update-status" role="status">尚未检查更新</span>
+            </span>
+            <button type="button" class="btn btn-secondary btn-sm" id="update-action">检查更新</button>
+          </div>
         </div>
         <p class="field-error" id="settings-error" role="alert"></p>
 
@@ -220,7 +247,6 @@
             <svg class="icon" aria-hidden="true"><use href="#i-power" /></svg>
             <span>退出程序</span>
           </button>
-          <p class="version" id="version"></p>
         </footer>
       </section>
     </div>

@@ -22,6 +22,8 @@ pub struct Settings {
     pub sound: bool,
     /// 关闭主窗口时隐藏到托盘，而不是退出程序
     pub close_to_tray: bool,
+    /// 定期检查新版本（只提示，不自动安装）
+    pub auto_update: bool,
 }
 
 impl Default for Settings {
@@ -31,6 +33,7 @@ impl Default for Settings {
             mode: Mode::Normal,
             sound: true,
             close_to_tray: true,
+            auto_update: true,
         }
     }
 }
@@ -88,6 +91,7 @@ mod tests {
             mode: Mode::EyeCare,
             sound: false,
             close_to_tray: false,
+            auto_update: false,
         };
         settings.save(&path).unwrap();
         assert_eq!(Settings::load(&path), settings);
@@ -104,6 +108,7 @@ mod tests {
         assert_eq!(settings.mode, Mode::Normal);
         assert!(!settings.sound);
         assert!(settings.close_to_tray);
+        assert!(settings.auto_update);
 
         fs::write(&path, "not json").unwrap();
         assert_eq!(Settings::load(&path), Settings::default());

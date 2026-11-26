@@ -14,7 +14,10 @@
 
 系统要求：Windows 10 / 11 x64。按当前用户安装，无需管理员权限；
 Windows 10 若未安装 WebView2，安装程序会自动下载。安装包未签名，如出现 SmartScreen 提示，
-请点击「更多信息 → 仍要运行」。升级时直接运行新的安装包即可。
+请点击「更多信息 → 仍要运行」。
+
+程序会定期检查新版本，发现后在主窗口底部和托盘菜单中提示，点击即可下载、校验并安装（完成后自动重启）；
+也可以随时直接运行新的安装包覆盖升级。
 
 ## 使用方法
 
@@ -79,9 +82,12 @@ npm run tauri build -- --bundles nsis   # 本地打包安装程序（仅限 Wind
 
 1. **前端检查**（Ubuntu）：Biome lint / 格式、TypeScript 类型检查、单元测试、Vite 构建；
 2. **Rust 检查**（Windows）：`cargo fmt`、`cargo clippy -D warnings`、`cargo test`；
-3. **打包**（Windows）：`tauri build` 生成 NSIS 安装包并上传为构建产物。
+3. **打包**（Windows）：`tauri build` 生成 NSIS 安装包，用仓库 secret `TAURI_SIGNING_PRIVATE_KEY`
+   为其生成更新签名，并写出自动更新清单 `latest.json`，一并上传为构建产物。
 
-推送到 `main` 且以上全部通过后，自动删除旧的 `rolling` 发布并用最新安装包重新创建（版本号 `0.1.<构建序号>`）。
+推送到 `main` 且以上全部通过后，自动删除旧的 `rolling` 发布并用最新安装包和 `latest.json` 重新创建
+（版本号 `0.1.<构建序号>`，GitHub 接口偶发失败时会重试）。已安装的程序从
+`releases/download/rolling/latest.json` 读取新版本信息，并用内置公钥校验签名。
 
 ## 致谢
 

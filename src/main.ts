@@ -1,6 +1,6 @@
 import "./styles/main.css";
 import { getVersion } from "@tauri-apps/api/app";
-import { api, type Mode, type Settings, type Snapshot } from "./lib/api.ts";
+import { api, type Mode, type Settings, type Snapshot, type UpdateStatus } from "./lib/api.ts";
 import {
   FIELD_MAX,
   formatClock,
@@ -12,6 +12,7 @@ import {
   stepField,
   toHms,
 } from "./lib/time.ts";
+import { updateView } from "./lib/update.ts";
 import { metaText, primaryAction, statusText } from "./lib/view.ts";
 
 function byId<T extends Element = HTMLElement>(id: string): T {
@@ -35,12 +36,17 @@ const ui = {
   primaryLabel: byId("primary-label"),
   secondary: byId<HTMLButtonElement>("secondary"),
   trayHint: byId("tray-hint"),
+  updateBanner: byId<HTMLButtonElement>("update-banner"),
+  updateBannerText: byId("update-banner-text"),
   settings: byId("settings"),
   openSettings: byId<HTMLButtonElement>("open-settings"),
   closeSettings: byId<HTMLButtonElement>("close-settings"),
   optSound: byId<HTMLInputElement>("opt-sound"),
   optTray: byId<HTMLInputElement>("opt-tray"),
   optAutostart: byId<HTMLInputElement>("opt-autostart"),
+  optUpdate: byId<HTMLInputElement>("opt-update"),
+  updateStatus: byId("update-status"),
+  updateAction: byId<HTMLButtonElement>("update-action"),
   settingsError: byId("settings-error"),
   quit: byId<HTMLButtonElement>("quit"),
   version: byId("version"),
@@ -69,6 +75,7 @@ let snapshot: Snapshot = {
 let receivedAt = performance.now();
 let renderTimer: number | undefined;
 let busy = false;
+let updateStatus: UpdateStatus = { state: "idle" };
 
 // ---------- 状态渲染 ----------
 
@@ -82,6 +89,7 @@ function applySnapshot(next: Snapshot): void {
   }
   renderPhase();
   renderClock();
+  renderUpdate();
 
   window.clearInterval(renderTimer);
   renderTimer =
@@ -271,12 +279,58 @@ for (const radio of modeRadios) {
   });
 }
 
+// ---------- 更新 ----------
+
+function renderUpdate(): void {
+  const view = updateView(updateStatus, snapshot.phase === "idle");
+  ui.updateBanner.hidden = view.banner === undefined;
+  ui.trayHint.hidden = view.banner !== undefined;
+  if (view.banner) {
+    setText(ui.updateBannerText, view.banner.text);
+    ui.updateBanner.disabled = !view.banner.actionable;
+  }
+  setText(ui.updateStatus, view.status);
+  setText(ui.updateAction, view.button.label);
+  ui.updateAction.disabled = view.button.action === "none";
+  ui.updateAction.dataset.action = view.button.action;
+  // 有可安装的新版本时突出为主按钮
+  const install = view.button.action === "install";
+  ui.updateAction.classList.toggle("btn-primary", install);
+  ui.updateAction.classList.toggle("btn-secondary", !install);
+}
+
+function applyUpdateStatus(status: UpdateStatus): void {
+  updateStatus = status;
+  renderUpdate();
+}
+
+/** 下载进度和结果通过 update-state 事件推送；成功时程序会退出并自动重启 */
+async function installUpdate(errorTarget: HTMLElement): Promise<void> {
+  showError(errorTarget, "");
+  try {
+    await api.installUpdate();
+  } catch (error) {
+    showError(errorTarget, String(error));
+  }
+}
+
+ui.updateBanner.addEventListener("click", () => void installUpdate(ui.error));
+ui.updateAction.addEventListener("click", () => {
+  if (ui.updateAction.dataset.action === "install") {
+    void installUpdate(ui.settingsError);
+  } else if (ui.updateAction.dataset.action === "check") {
+    showError(ui.settingsError, "");
+    void api.checkUpdate();
+  }
+});
+
 // ---------- 设置 ----------
 
 function applySettings(settings: Settings): void {
   ui.optSound.checked = settings.sound;
   ui.optTray.checked = settings.closeToTray;
   ui.optAutostart.checked = settings.autostart;
+  ui.optUpdate.checked = settings.autoUpdate;
   ui.trayHint.textContent = settings.closeToTray
     ? "关闭窗口后仍会在托盘中继续计时"
     : "关闭窗口将退出程序";
@@ -297,7 +351,10 @@ function setSettingsOpen(open: boolean): void {
   }
 }
 
-function bindSwitch(input: HTMLInputElement, key: "sound" | "closeToTray" | "autostart"): void {
+function bindSwitch(
+  input: HTMLInputElement,
+  key: "sound" | "closeToTray" | "autostart" | "autoUpdate",
+): void {
   input.addEventListener("change", async () => {
     showError(ui.settingsError, "");
     try {
@@ -312,6 +369,7 @@ function bindSwitch(input: HTMLInputElement, key: "sound" | "closeToTray" | "aut
 bindSwitch(ui.optSound, "sound");
 bindSwitch(ui.optTray, "closeToTray");
 bindSwitch(ui.optAutostart, "autostart");
+bindSwitch(ui.optUpdate, "autoUpdate");
 
 ui.openSettings.addEventListener("click", () => setSettingsOpen(true));
 ui.closeSettings.addEventListener("click", () => setSettingsOpen(false));
@@ -332,8 +390,13 @@ document.addEventListener("keydown", (event) => {
 // ---------- 启动 ----------
 
 async function init(): Promise<void> {
-  await api.onState(applySnapshot);
-  const [state, settings] = await Promise.all([api.getState(), api.getSettings()]);
+  await Promise.all([api.onState(applySnapshot), api.onUpdate(applyUpdateStatus)]);
+  const [state, settings, update] = await Promise.all([
+    api.getState(),
+    api.getSettings(),
+    api.getUpdateStatus(),
+  ]);
+  updateStatus = update;
   applySettings(settings);
   // 普通模式开始计时时会记住时长，所以设置里的时长总是编辑器该显示的值
   writeEditor(settings.durationMs);

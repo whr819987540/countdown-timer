@@ -9,6 +9,7 @@ use tauri_plugin_autostart::ManagerExt;
 use crate::service::{self, AppState};
 use crate::sound;
 use crate::timer::{Mode, Snapshot, TimerError};
+use crate::updater::{self, UpdateStatus};
 
 type CommandResult<T = ()> = Result<T, String>;
 
@@ -58,6 +59,7 @@ pub struct SettingsView {
     duration_ms: u64,
     sound: bool,
     close_to_tray: bool,
+    auto_update: bool,
     /// 开机自启动的真实状态以注册表为准，不存进 settings.json
     autostart: bool,
 }
@@ -67,6 +69,7 @@ pub struct SettingsView {
 pub struct SettingsPatch {
     sound: Option<bool>,
     close_to_tray: Option<bool>,
+    auto_update: Option<bool>,
     autostart: Option<bool>,
 }
 
@@ -98,7 +101,15 @@ pub fn update_settings(app: AppHandle, patch: SettingsPatch) -> CommandResult<Se
         if let Some(close_to_tray) = patch.close_to_tray {
             settings.close_to_tray = close_to_tray;
         }
+        if let Some(auto_update) = patch.auto_update {
+            settings.auto_update = auto_update;
+        }
     });
+    if patch.auto_update == Some(true) {
+        // 刚打开自动检查时立即检查一次，不必等到下一个周期
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { updater::check(&app, false).await });
+    }
     Ok(settings_view(&app))
 }
 
@@ -108,8 +119,26 @@ fn settings_view(app: &AppHandle) -> SettingsView {
         duration_ms: settings.duration_ms,
         sound: settings.sound,
         close_to_tray: settings.close_to_tray,
+        auto_update: settings.auto_update,
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
     }
+}
+
+#[tauri::command]
+pub fn get_update_status(app: AppHandle) -> UpdateStatus {
+    updater::status(&app)
+}
+
+/// 手动检查更新；结果通过 `update-state` 事件推送。
+#[tauri::command]
+pub async fn check_update(app: AppHandle) {
+    updater::check(&app, true).await;
+}
+
+/// 下载并安装新版本；成功时程序会退出并由安装程序重新启动，不会返回。
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> CommandResult {
+    updater::install(&app).await
 }
 
 #[tauri::command]

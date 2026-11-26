@@ -25,6 +25,7 @@ src/
   lib/api.ts              所有 Tauri 命令与事件的类型化封装（前端只通过它和后端通信）
   lib/time.ts             纯函数工具（格式化、解析、步进），配套 time.test.ts
   lib/view.ts             由快照推导界面文案（状态、按钮、弹窗内容），配套 view.test.ts
+  lib/update.ts           由更新状态推导界面内容（底部提示、设置面板），配套 update.test.ts
   styles/base.css         设计令牌（颜色 / 间距 / 字体 / 动效）与通用组件
   styles/main.css         主窗口样式
   styles/alert.css        提醒弹窗样式
@@ -40,6 +41,7 @@ src-tauri/
   src/tray.rs             托盘图标与菜单
   src/ui.rs               主窗口 / 提醒弹窗管理
   src/sound.rs            Windows 闹钟提示音（PlaySoundW）
+  src/updater.rs          自动更新：定时检查、下载、校验签名、安装（tauri-plugin-updater）
 assets/app-icon.svg       应用图标源文件
 design-system/            ui-ux-pro-max 生成的设计系统（MASTER.md 为视觉规范）
 docs/FEATURES.md          功能说明
@@ -96,6 +98,14 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 - **主窗口启动时隐藏**（`visible: false`），在 `setup` 中设置与主题一致的背景色后再显示，避免闪白；
   带 `--hidden` 参数（开机自启动）时不显示。
 - 设置保存在 `app_config_dir()/settings.json`；开机自启动状态以 `tauri-plugin-autostart`（注册表）为准，不存文件。
+- **自动更新**（`updater.rs`）：线程 `update-checker` 启动 10 秒后、之后每 6 小时检查一次（debug 构建不自动检查）。
+  状态通过 `update-state` 事件下发，发现新版本只提示；`install` 在计时未空闲时拒绝，下载完成后再确认一次。
+  Windows 上插件运行安装程序后直接 `exit(0)`，所以退出前的清理（移除托盘图标）放在检查时设置的
+  `on_before_exit` 中；安装前写入标记文件，重启后即使带 `--hidden` 也显示主窗口。
+  前端不直接调用插件 API（capabilities 保持最小），只调用 `check_update` / `install_update` 等自有命令。
+- **更新签名密钥**：公钥在 `tauri.conf.json` 的 `plugins.updater.pubkey`；私钥只存在维护者本机
+  （`~/.tauri/countdown-timer.key`）和仓库 secret `TAURI_SIGNING_PRIVATE_KEY` 中，**绝不提交**。
+  私钥丢失后已安装的程序将无法再自动更新（只能手动安装一次带新公钥的版本）。
 
 ## 编码约定
 
@@ -143,10 +153,13 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 - 工作流：`.github/workflows/ci.yml`，在 push 到 `main`、Pull Request、手动触发时运行。
   - `frontend`（ubuntu）：`npm run lint` / `typecheck` / `test` / `build`
   - `rust`（windows）：`cargo fmt --check`、`cargo clippy --all-targets --locked -D warnings`、`cargo test --locked`
-  - `build`（windows）：`tauri build --bundles nsis`，版本号注入为 `0.1.<run_number>`，上传安装包产物
-  - `release`（仅 `main`，依赖前三个 job 全部通过）：删除旧的 `rolling` 发布与标签，用新安装包重新创建并标记为 Latest
-- 发布产物：`CountdownTimer_<版本>_x64-setup.exe` 与固定名称的 `CountdownTimer-setup.exe`
-  （README 中的永久下载链接依赖后者，改名时同步修改）。
+  - `build`（windows）：`tauri build --bundles nsis`，版本号注入为 `0.1.<run_number>`；有 `TAURI_SIGNING_PRIVATE_KEY`
+    时生成更新签名并写出 `latest.json`（没有时跳过，只打普通安装包），上传安装包产物
+  - `release`（仅 `main`，依赖前三个 job 全部通过）：删除旧的 `rolling` 发布与标签，用新安装包重新创建并标记为 Latest；
+    GitHub 接口偶发 5xx 时最多重试 5 次
+- 发布产物：`CountdownTimer_<版本>_x64-setup.exe`、固定名称的 `CountdownTimer-setup.exe`
+  （README 中的永久下载链接依赖后者，改名时同步修改）与 `latest.json`（自动更新清单，
+  `url` 指向带版本号的安装包，客户端从 `releases/download/rolling/latest.json` 读取）。
 - 推送后用 GitHub CLI 跟踪进度，失败时查看日志修复后再推送：
   ```bash
   gh run list --limit 5

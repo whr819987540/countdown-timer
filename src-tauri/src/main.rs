@@ -8,11 +8,13 @@ mod sound;
 mod timer;
 mod tray;
 mod ui;
+mod updater;
 
 use tauri::{Manager, Window, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 
 use crate::service::AppState;
+use crate::updater::UpdateState;
 
 /// 开机自启动时附带的参数：只驻留托盘，不弹出主窗口
 const HIDDEN_ARG: &str = "--hidden";
@@ -27,16 +29,22 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec![HIDDEN_ARG]),
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             app.manage(AppState::new(settings_path));
+            app.manage(UpdateState::default());
             tray::create(app.handle())?;
             service::spawn_ticker(app.handle().clone())?;
+            updater::spawn_checker(app.handle().clone())?;
             service::refresh(app.handle());
 
+            // 用户手动更新后由安装程序重启：即使是开机自启动带来的 --hidden 参数也显示主窗口
+            let show = !std::env::args().any(|arg| arg == HIDDEN_ARG)
+                || updater::take_show_after_update(app.handle());
             if let Some(window) = app.get_webview_window(ui::MAIN) {
                 let _ = window.set_background_color(Some(ui::background_for(window.theme().ok())));
-                if !std::env::args().any(|arg| arg == HIDDEN_ARG) {
+                if show {
                     window.show()?;
                     window.set_focus()?;
                 }
@@ -54,6 +62,9 @@ fn main() {
             commands::stop,
             commands::get_settings,
             commands::update_settings,
+            commands::get_update_status,
+            commands::check_update,
+            commands::install_update,
             commands::quit_app,
         ])
         .run(tauri::generate_context!())

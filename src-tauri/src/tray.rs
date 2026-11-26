@@ -1,16 +1,23 @@
 //! 系统托盘：显示剩余时间，并提供不打开主窗口即可控制计时的菜单。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::timer::{format_clock, Mode, Phase, Snapshot, Stage, TimerError};
+use crate::updater::{self, UpdateStatus};
 use crate::{service, ui};
 
 struct TrayHandles {
     icon: TrayIcon,
+    menu: Menu<Wry>,
     toggle: MenuItem<Wry>,
     stop: MenuItem<Wry>,
+    /// 发现新版本时才插入菜单（"退出"之前）
+    update: MenuItem<Wry>,
+    update_shown: AtomicBool,
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
@@ -18,6 +25,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "开始", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "停止", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", "更新", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
@@ -38,6 +46,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "show" => ui::show_main(app),
             "toggle" => report(service::toggle(app)),
             "stop" => report(service::stop(app)),
+            "update" => install_from_tray(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -56,8 +65,58 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     }
     let icon = builder.build(app)?;
 
-    app.manage(TrayHandles { icon, toggle, stop });
+    app.manage(TrayHandles {
+        icon,
+        menu,
+        toggle,
+        stop,
+        update,
+        update_shown: AtomicBool::new(false),
+    });
     Ok(())
+}
+
+/// 托盘里点击"更新到 x"：打开主窗口显示进度；计时进行中时只打开主窗口，由界面说明原因。
+fn install_from_tray(app: &AppHandle) {
+    ui::show_main(app);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(err) = updater::install(&app).await {
+            eprintln!("托盘更新失败：{err}");
+        }
+    });
+}
+
+/// 按更新状态显示 / 隐藏托盘中的更新菜单项。
+pub fn update_updater(app: &AppHandle, status: &UpdateStatus) {
+    let Some(handles) = app.try_state::<TrayHandles>() else {
+        return;
+    };
+    let (text, enabled) = match status {
+        UpdateStatus::Available { version } => (format!("更新到 {version}"), true),
+        UpdateStatus::Downloading {
+            percent: Some(percent),
+            ..
+        } => (format!("正在下载更新 {percent}%"), false),
+        UpdateStatus::Downloading { percent: None, .. } => ("正在下载更新…".to_owned(), false),
+        UpdateStatus::Installing { .. } => ("正在安装更新…".to_owned(), false),
+        _ => {
+            if handles.update_shown.swap(false, Ordering::SeqCst) {
+                let _ = handles.menu.remove(&handles.update);
+            }
+            return;
+        }
+    };
+    let _ = handles.update.set_text(text);
+    let _ = handles.update.set_enabled(enabled);
+    if !handles.update_shown.swap(true, Ordering::SeqCst) {
+        // 插在"退出"之前，与程序级操作放在一起
+        let position = handles
+            .menu
+            .items()
+            .map_or(0, |items| items.len().saturating_sub(1));
+        let _ = handles.menu.insert(&handles.update, position);
+    }
 }
 
 /// 同步托盘提示文字；阶段变化时同时更新菜单项。

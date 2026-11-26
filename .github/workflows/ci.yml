@@ -105,24 +105,57 @@ jobs:
         shell: bash
         run: echo "version=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
+      # 用私钥为安装包生成更新签名（.sig）；没有私钥时（例如来自 fork 的 PR）只打普通安装包
       - name: tauri build
         shell: bash
-        run: npx tauri build --ci --bundles nsis --config "{\"version\":\"${{ steps.version.outputs.version }}\"}"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          updater=false
+          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && updater=true
+          npx tauri build --ci --bundles nsis \
+            --config "{\"version\":\"${VERSION}\",\"bundle\":{\"createUpdaterArtifacts\":${updater}}}"
 
-      - name: 整理安装包
+      - name: 整理安装包与更新清单
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p release
           installer=$(ls src-tauri/target/release/bundle/nsis/*-setup.exe)
           cp "$installer" release/
           # 固定文件名，供 README 中的"永久最新版"下载链接使用
           cp "$installer" release/CountdownTimer-setup.exe
+          # 自动更新清单：程序从 rolling 发布读取它，按签名校验带版本号的安装包
+          if [ -f "$installer.sig" ]; then
+            node -e '
+              const fs = require("node:fs");
+              const [version, name, sigPath, repo] = process.argv.slice(1);
+              const entry = {
+                signature: fs.readFileSync(sigPath, "utf8").trim(),
+                url: `https://github.com/${repo}/releases/download/rolling/${name}`,
+              };
+              const manifest = {
+                version,
+                notes: `Rolling build ${version}`,
+                pub_date: new Date().toISOString(),
+                platforms: { "windows-x86_64-nsis": entry, "windows-x86_64": entry },
+              };
+              fs.writeFileSync("release/latest.json", JSON.stringify(manifest, null, 2));
+            ' "$VERSION" "$(basename "$installer")" "$installer.sig" "$GITHUB_REPOSITORY"
+          else
+            echo "::warning::未配置 TAURI_SIGNING_PRIVATE_KEY，本次构建不支持自动更新"
+          fi
           ls -l release
 
       - uses: actions/upload-artifact@v7
         with:
           name: CountdownTimer-windows-x64
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/latest.json
           if-no-files-found: error
           retention-days: 14
 
@@ -159,11 +192,22 @@ jobs:
           安装包未签名，若出现 SmartScreen 提示，请点击"更多信息 → 仍要运行"。
           EOF
 
+      # 先删后建：rolling 标签要指向本次提交。GitHub API 偶发 5xx，创建失败时重试，
+      # 避免旧发布已删除而新发布没建成（下载链接和自动更新都会因此失效）
       - name: 替换 rolling release
         run: |
           gh release delete rolling --cleanup-tag --yes || true
-          gh release create rolling release/*.exe \
-            --target "$GITHUB_SHA" \
-            --title "Rolling build ${VERSION}" \
-            --notes-file notes.md \
-            --latest
+          for attempt in 1 2 3 4 5; do
+            if gh release create rolling release/* \
+              --target "$GITHUB_SHA" \
+              --title "Rolling build ${VERSION}" \
+              --notes-file notes.md \
+              --latest; then
+              exit 0
+            fi
+            echo "::warning::第 ${attempt} 次创建发布失败，稍后重试"
+            # 失败的尝试可能留下半成品发布，清理后再试
+            gh release delete rolling --cleanup-tag --yes || true
+            sleep $((attempt * 20))
+          done
+          exit 1
