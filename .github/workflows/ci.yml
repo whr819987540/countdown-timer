@@ -159,9 +159,128 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # 端到端冒烟测试：安装刚打出的安装包，用 msedgedriver（WebView2 的 WebDriver）像用户一样操作界面，
+  # 覆盖开始计时 / 悬浮窗 / 时间到弹窗 / 停止 / 退出等主流程；程序卡死时按超时失败。脚本见 e2e/smoke.ts
+  e2e:
+    name: 端到端测试（Windows）
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: CountdownTimer-windows-x64
+          path: release
+
+      - name: 静默安装
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release -Filter 'CountdownTimer_*_x64-setup.exe' | Select-Object -First 1
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          $dir = Join-Path $env:LOCALAPPDATA 'CountdownTimer'
+          $exe = Get-ChildItem $dir -Filter *.exe -ErrorAction SilentlyContinue |
+            Where-Object Name -notlike 'uninstall*' | Select-Object -First 1
+          if (-not $exe) { Get-ChildItem $env:LOCALAPPDATA | Out-Host; throw "安装后找不到程序：$dir" }
+          Write-Host "已安装：$($exe.FullName)"
+          "APP_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+      # msedgedriver 必须与 WebView2 运行时版本一致；下载失败时退回 runner 预装的版本
+      - name: 准备 msedgedriver
+        shell: pwsh
+        run: |
+          $client = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = @(
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$client",
+            "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$client",
+            "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$client"
+          ) | ForEach-Object { (Get-ItemProperty -Path $_ -ErrorAction SilentlyContinue).pv } |
+            Where-Object { $_ } | Select-Object -First 1
+          Write-Host "WebView2 运行时：$version"
+          $dir = Join-Path $env:RUNNER_TEMP 'msedgedriver'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $driver = $null
+          foreach ($base in 'https://msedgedriver.microsoft.com', 'https://msedgedriver.azureedge.net') {
+            try {
+              Invoke-WebRequest "$base/$version/edgedriver_win64.zip" -OutFile "$dir\driver.zip"
+              Expand-Archive "$dir\driver.zip" -DestinationPath $dir -Force
+              $driver = Join-Path $dir 'msedgedriver.exe'
+              break
+            } catch { Write-Host "从 $base 下载失败：$_" }
+          }
+          if (-not $driver) {
+            $driver = Join-Path $env:EDGEWEBDRIVER 'msedgedriver.exe'
+            Write-Host "::warning::改用 runner 预装的 msedgedriver，版本可能与 WebView2 不一致"
+          }
+          & $driver --version
+          "NATIVE_DRIVER=$driver" >> $env:GITHUB_ENV
+
+      # 附加模式：自己启动程序并打开 WebView2 调试端口，再让 msedgedriver 连上去
+      # （Tauri 给 WebView2 指定了自己的数据目录，由驱动启动程序时找不到 DevToolsActivePort 文件）
+      - name: 冒烟测试
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force e2e/screenshots | Out-Null
+          $log = Join-Path $PWD 'e2e/screenshots/msedgedriver.log'
+
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
+          $app = Start-Process -FilePath $env:APP_EXE -PassThru
+          Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+          $cdp = $null
+          for ($i = 0; $i -lt 60 -and -not $cdp; $i++) {
+            try { $cdp = Invoke-RestMethod 'http://127.0.0.1:9222/json/version' -TimeoutSec 2 } catch { Start-Sleep 1 }
+          }
+          if (-not $cdp) {
+            Write-Host "程序进程：$(if ($app.HasExited) { "已退出，退出码 $($app.ExitCode)" } else { '运行中' })"
+            throw 'WebView2 调试端口 9222 未打开'
+          }
+          Write-Host "WebView2：$($cdp.Browser)"
+          Invoke-RestMethod 'http://127.0.0.1:9222/json/list' | ForEach-Object { Write-Host "  调试目标：$($_.type) $($_.url)" }
+
+          $driver = Start-Process -FilePath $env:NATIVE_DRIVER -PassThru `
+            -ArgumentList '--port=4444', '--verbose', "--log-path=$log"
+          $ready = $false
+          for ($i = 0; $i -lt 60 -and -not $ready; $i++) {
+            $tcp = [System.Net.Sockets.TcpClient]::new()
+            try { $ready = $tcp.ConnectAsync('127.0.0.1', 4444).Wait(500) -and $tcp.Connected } catch {} finally { $tcp.Dispose() }
+            if (-not $ready) { Start-Sleep -Milliseconds 500 }
+          }
+          if (-not $ready) { throw 'msedgedriver 未能启动' }
+
+          $failed = $false
+          try {
+            node e2e/smoke.ts 127.0.0.1:9222
+            $failed = $LASTEXITCODE -ne 0
+          } finally {
+            Stop-Process -Id $driver.Id -Force -ErrorAction SilentlyContinue
+            if ($failed) { Get-Content $log -ErrorAction SilentlyContinue | Select-Object -Last 60 | Out-Host }
+          }
+          if ($failed) {
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+            throw '冒烟测试失败（截图与驱动日志见构建产物 e2e-screenshots）'
+          }
+          if (-not $app.WaitForExit(10000)) {
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+            throw '点击「退出程序」后进程仍在运行'
+          }
+
+      - name: 上传截图与驱动日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-screenshots
+          path: e2e/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
   release:
     name: 发布 rolling release
-    needs: [frontend, rust, build]
+    needs: [frontend, rust, build, e2e]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

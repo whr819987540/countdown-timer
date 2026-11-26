@@ -49,6 +49,7 @@ src-tauri/
   src/updater.rs          自动更新：定时检查、下载、校验签名、安装（tauri-plugin-updater）
 assets/app-icon.svg       应用图标源文件
 design-system/            ui-ux-pro-max 生成的设计系统（MASTER.md 为视觉规范）
+e2e/                      Windows 端到端冒烟测试（smoke.ts + 最小 WebDriver 客户端 webdriver.ts，CI 中运行）
 docs/FEATURES.md          功能说明
 .github/workflows/ci.yml  检查、打包、rolling release
 ```
@@ -106,7 +107,9 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 - **悬浮窗**（`ui::show_mini` / `exit_mini`）：`publish` 检测到一次计时开始（空闲 → 非空闲）且开启了
   `mini_on_start` 时打开悬浮窗并隐藏主窗口，记录主窗口原本是否可见；回到空闲时关闭悬浮窗，按记录恢复主窗口。
   `ui::show_main`（展开、托盘、单实例唤起）会先关闭悬浮窗。悬浮窗关闭时把位置写入设置，下次打开时若仍在某个
-  显示器工作区内就沿用，否则放到右上角（计算在 `fit.rs`）。悬浮窗刻意不显示数字（用户反馈跳动的秒数分散注意力），
+  显示器工作区内就沿用，否则放到右下角（计算在 `fit.rs`；不放右上角，以免挡住最大化窗口的关闭按钮）。
+  Windows 不允许窗口窄于约 136 像素，悬浮窗会被撑宽：页面把 48px 徽章贴在右侧，`ui::shape_mini` 用
+  `SetWindowRgn` 把窗口裁成贴右侧的圆形，圆形外的点击穿透到下面的窗口；尺寸 / 缩放比例变化时重新裁剪。悬浮窗刻意不显示数字（用户反馈跳动的秒数分散注意力），
   剩余时间只在悬停提示中按分钟显示；单击 / 拖动由 `mini.ts` 自行区分（移动超过 3px 才调用 `startDragging`）。
   窗口透明且无阴影，页面的 `color-scheme` 设为 `normal`，否则深色模式下画布会被涂成不透明的深色。
 - **创建 / 销毁窗口的命令必须是 `async`**：同步命令在主线程执行，Windows 上在其中创建窗口会死锁；
@@ -178,6 +181,9 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
     时生成更新签名并写出 `latest.json`（没有时跳过，只打普通安装包），上传安装包产物
   - `release`（仅 `main`，依赖前三个 job 全部通过）：删除旧的 `rolling` 发布与标签，用新安装包重新创建并标记为 Latest；
     GitHub 接口偶发 5xx 时最多重试 5 次
+  - `e2e`（windows，依赖 `build`）：静默安装刚打出的安装包，用 `tauri-driver` + 与 WebView2 版本匹配的 `msedgedriver`
+    运行 `e2e/smoke.ts`，像用户一样走一遍主流程（开始 → 悬浮窗 → 时间到弹窗 → 停止 → 展开 / 缩回 → 20-20-20 → 退出），
+    每步有超时，程序卡死即失败；各状态截图上传为产物 `e2e-screenshots`。`release` 依赖它通过
 - 发布产物：`CountdownTimer_<版本>_x64-setup.exe`、固定名称的 `CountdownTimer-setup.exe`
   （README 中的永久下载链接依赖后者，改名时同步修改）与 `latest.json`（自动更新清单，
   `url` 指向带版本号的安装包，客户端从 `releases/download/rolling/latest.json` 读取）。
@@ -198,3 +204,8 @@ CC_x86_64_pc_windows_msvc=clang cargo clippy --all-targets --target x86_64-pc-wi
 
 功能或修复完成、本地检查通过后，直接提交并推送到 `main`，然后用 GitHub CLI 盯 CI 直到全部通过（含 rolling release）；
 失败时查看日志、修复后再推送（命令见「CI / 发布」）。
+
+- 本机（Linux）无法运行 Windows 程序，界面与窗口行为由 CI 的 `e2e` 任务在 Windows 上验证。
+  新增或修改窗口、按钮、主流程时，同步更新 `e2e/smoke.ts`，并在 CI 产物 `e2e-screenshots` 中检查真实渲染。
+- 修改 CI 本身或调试 `e2e` 时，可以先推到分支，用 `gh workflow run ci.yml --ref <分支>` 手动触发（分支上不会发布），
+  通过后再合入 `main`。

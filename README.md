@@ -86,6 +86,9 @@ npm run tauri build -- --bundles nsis   # 本地打包安装程序（仅限 Wind
 3. **打包**（Windows）：`tauri build` 生成 NSIS 安装包，用仓库 secret `TAURI_SIGNING_PRIVATE_KEY`
    为其生成更新签名，并写出自动更新清单 `latest.json`，一并上传为构建产物。
 
+4. **端到端测试**（Windows）：静默安装上一步的安装包，用 `tauri-driver`（WebDriver）像用户一样操作界面，
+   走一遍开始计时、悬浮窗、时间到弹窗、停止、20-20-20、退出等主流程，程序卡死即失败，并上传各状态截图。
+
 推送到 `main` 且以上全部通过后，自动删除旧的 `rolling` 发布并用最新安装包和 `latest.json` 重新创建
 （版本号 `0.1.<构建序号>`，GitHub 接口偶发失败时会重试）。已安装的程序从
 `releases/download/rolling/latest.json` 读取新版本信息，并用内置公钥校验签名。

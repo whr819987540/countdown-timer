@@ -11,7 +11,7 @@ mod tray;
 mod ui;
 mod updater;
 
-use tauri::{Manager, Window, WindowEvent};
+use tauri::{CloseRequestApi, Manager, Window, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 
 use crate::service::AppState;
@@ -43,13 +43,12 @@ fn main() {
             // 用户手动更新后由安装程序重启：即使是开机自启动带来的 --hidden 参数也显示主窗口
             let show = !std::env::args().any(|arg| arg == HIDDEN_ARG)
                 || updater::take_show_after_update(app.handle());
-            if let Some(window) = app.get_webview_window(ui::MAIN) {
-                let _ = window.set_background_color(Some(ui::background_for(window.theme().ok())));
-                ui::fit_to_work_area(&window);
-                if show {
-                    window.show()?;
-                    window.set_focus()?;
-                }
+            let window = ui::create_main(app.handle())?;
+            let _ = window.set_background_color(Some(ui::background_for(window.theme().ok())));
+            ui::fit_to_work_area(&window);
+            if show {
+                window.show()?;
+                window.set_focus()?;
             }
             Ok(())
         })
@@ -76,9 +75,19 @@ fn main() {
 }
 
 fn handle_window_event(window: &Window, event: &WindowEvent) {
-    let WindowEvent::CloseRequested { api, .. } = event else {
-        return;
-    };
+    match event {
+        WindowEvent::CloseRequested { api, .. } => on_close_requested(window, api),
+        // 悬浮窗的圆形裁剪区域按物理像素计算，尺寸或缩放比例（移到其他显示器）变化时重新裁剪
+        WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. }
+            if window.label() == ui::MINI =>
+        {
+            ui::shape_mini(window);
+        }
+        _ => {}
+    }
+}
+
+fn on_close_requested(window: &Window, api: &CloseRequestApi) {
     let app = window.app_handle();
     match window.label() {
         ui::MAIN => {

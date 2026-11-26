@@ -61,13 +61,15 @@ pub fn contains(area: Rect, rect: Rect) -> bool {
         && bottom(rect) <= bottom(area)
 }
 
-/// 把 `size` 大小的窗口放在 `area` 右上角、留出 `margin` 边距时的左上角坐标
-pub fn top_right(area: Rect, size: (u32, u32), margin: u32) -> (i32, i32) {
-    let x = i64::from(area.x) + i64::from(area.width) - i64::from(size.0) - i64::from(margin);
-    let y = i64::from(area.y) + i64::from(margin);
+/// 把 `size` 大小的窗口放在 `area` 右下角、留出 `margin` 边距时的左上角坐标
+pub fn bottom_right(area: Rect, size: (u32, u32), margin: u32) -> (i32, i32) {
+    let place = |start: i32, span: u32, len: u32| {
+        let pos = i64::from(start) + i64::from(span) - i64::from(len) - i64::from(margin);
+        i32::try_from(pos.max(i64::from(start))).unwrap_or(start)
+    };
     (
-        i32::try_from(x.max(i64::from(area.x))).unwrap_or(area.x),
-        i32::try_from(y).unwrap_or(area.y),
+        place(area.x, area.width, size.0),
+        place(area.y, area.height, size.1),
     )
 }
 
@@ -149,14 +151,28 @@ mod tests {
     }
 
     #[test]
-    fn places_window_at_top_right() {
-        assert_eq!(top_right(AREA, (420, 112), 28), (1920 - 420 - 28, 28));
+    fn places_window_at_bottom_right() {
+        assert_eq!(
+            bottom_right(AREA, (238, 84), 28),
+            (1920 - 238 - 28, 996 - 84 - 28)
+        );
         let offset = Rect {
             x: -1920,
             y: 84,
             width: 1920,
             height: 996,
         };
-        assert_eq!(top_right(offset, (420, 112), 28), (-420 - 28, 84 + 28));
+        assert_eq!(
+            bottom_right(offset, (238, 84), 28),
+            (-238 - 28, 84 + 996 - 84 - 28)
+        );
+        // 工作区比窗口还小时贴住左上角，不跑出工作区
+        let tiny = Rect {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+        };
+        assert_eq!(bottom_right(tiny, (238, 84), 28), (10, 20));
     }
 }

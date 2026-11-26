@@ -14,3 +14,6 @@ src-tauri/gen/
 .DS_Store
 Thumbs.db
 *.log
+
+# 端到端测试截图（CI 中作为构建产物上传）
+e2e/screenshots/
